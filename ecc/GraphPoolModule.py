@@ -21,13 +21,12 @@ class GraphPoolFunction(Function):
 
                 
     def forward(self, input):
-        self.save_for_backward(input)
-        
         output = input.new(len(self._degs), input.size(1))
-        if self._aggr==GraphConvFunction.AGGR_MAX:
-            self._max_indices = self._idxn.new(len(self._degs), input.size(1)).fill_(1e10)
+        if self._aggr==GraphPoolFunction.AGGR_MAX:
+            self._max_indices = self._idxn.new(len(self._degs), input.size(1)).fill_(-1)
         
         sel_input = input.new()
+        self._input_size = input.size()
         
         startd, starte = 0, 0
         while startd < len(self._degs):
@@ -47,9 +46,9 @@ class GraphPoolFunction(Function):
             k = 0
             for i in range(startd, startd+numd):
                 if self._degs[i]>0:
-                    if self._aggr==GraphConvFunction.AGGR_MEAN:
+                    if self._aggr==GraphPoolFunction.AGGR_MEAN:
                         torch.mean(sel_input.narrow(0,k,self._degs[i]), 0, out=output[i])
-                    elif self._aggr==GraphConvFunction.AGGR_MAX:
+                    elif self._aggr==GraphPoolFunction.AGGR_MAX:
                         torch.max(sel_input.narrow(0,k,self._degs[i]), 0, out=(output[i], self._max_indices[i]))
                 else:
                     output[i].fill_(0)
@@ -68,11 +67,8 @@ class GraphPoolFunction(Function):
 
 
     def backward(self, grad_output):
-        input = self.saved_tensors
-
-        grad_input = input.new(input.size()).fill_(0)
-        
-        grad_sel_input = input.new()
+        grad_input = grad_output.new(self._input_size).fill_(0)
+        grad_sel_input = grad_output.new()
 
         startd, starte = 0, 0
         while startd < len(self._degs):
@@ -84,16 +80,16 @@ class GraphPoolFunction(Function):
                 else:
                     break                    
             
-            grad_sel_input.resize_(nume, input.size(1))
+            grad_sel_input.resize_(nume, grad_output.size(1))
 
             k = 0
             for i in range(startd, startd+numd):
                 if self._degs[i]>0:
-                    if self._aggr==GraphConvFunction.AGGR_MEAN:
+                    if self._aggr==GraphPoolFunction.AGGR_MEAN:
                         torch.div(grad_output[i], self._degs[i], out=grad_sel_input[k])
                         if self._degs[i]>1:
-                            grad_sel_input.narrow(0, k+1, self._degs[i]-1).copy_( grad_sel_input[k].expand(self._degs[i]-1,1,self._out_channels) )
-                    elif self._aggr==GraphConvFunction.AGGR_MAX:
+                            grad_sel_input.narrow(0, k+1, self._degs[i]-1).copy_( grad_sel_input[k].expand(self._degs[i]-1,1,grad_output.size(1)) )
+                    elif self._aggr==GraphPoolFunction.AGGR_MAX:
                         grad_sel_input.narrow(0, k, self._degs[i]).fill_(0).scatter_(0, self._max_indices[i].view(1,-1), grad_output[i].view(1,-1))
                     k = k + self._degs[i]             
 
@@ -128,4 +124,4 @@ class GraphAvgPoolModule(GraphPoolModule):
         
 class GraphMaxPoolModule(GraphPoolModule):
     def __init__(self, gc_info=None, edge_mem_limit=1e20):
-        super(GraphAvgPoolModule, self).__init__(GraphPoolFunction.AGGR_MAX, gc_info, edge_mem_limit)                
+        super(GraphMaxPoolModule, self).__init__(GraphPoolFunction.AGGR_MAX, gc_info, edge_mem_limit)                

@@ -15,6 +15,8 @@ def graph_info_collate_classification(batch, edge_func):
     pooldata_by_layer = list(zip(*pooldata))
     
     features = torch.cat([torch.from_numpy(f) for f in features])
+    if features.dim()==1: features = features.view(-1,1)
+    
     classes = torch.LongTensor(classes)
     
     GIs, PIs = [], []    

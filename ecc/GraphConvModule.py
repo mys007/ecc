@@ -300,12 +300,12 @@ class NormalizationByStationaryDist(Function): #unsuccessful attempt to normaliz
 
 
 class GraphConvModule(nn.Module):
-    def __init__(self, in_channels, out_channels, weight_net, gc_info=None, degree_normalization='', nrepeats=1, edge_mem_limit=2000, aggr=''):
+    def __init__(self, in_channels, out_channels, filter_net, gc_info=None, degree_normalization='', nrepeats=1, edge_mem_limit=1e20, aggr=''):
         super(GraphConvModule, self).__init__()
         
         self._in_channels = in_channels
         self._out_channels = out_channels
-        self._wnet = weight_net
+        self._fnet = filter_net
         self._degree_normalization = degree_normalization
         self._nrepeats = nrepeats
         self._edge_mem_limit = edge_mem_limit
@@ -324,9 +324,10 @@ class GraphConvModule(nn.Module):
         edges_degnorm = self._gci.get_degnorm(input.is_cuda) if self._degree_normalization=='unweighted' else None
         edgefeats = Variable(edgefeats, requires_grad=False)
         
-        weights = self._wnet(edgefeats) if self._wnet else edgefeats
+        weights = self._fnet(edgefeats) if self._fnet else edgefeats
         if weights.size(1) == self._in_channels*self._out_channels:
             weights = weights.view(-1, self._in_channels, self._out_channels)
+        assert input.dim()==2 and weights.dim()==3
            
         #if self._degree_normalization=='weighted_directed':
         #   idxn_cpu, idxe_cpu, _, _ = self._gci.get_buffers(False)
@@ -352,7 +353,7 @@ class GraphConvModule(nn.Module):
         if idxe: idxe = Variable(idxe, requires_grad=False)
         edgefeats = Variable(edgefeats, requires_grad=False)
            
-        weights = self._wnet(edgefeats).view(-1, self._in_channels, self._out_channels)
+        weights = self._fnet(edgefeats).view(-1, self._in_channels, self._out_channels)
         
         output = Variable(input.data.new(len(degs), self._out_channels))
         #output_list = []
@@ -403,7 +404,7 @@ class GraphConvModule(nn.Module):
         idxn = Variable(idxn, requires_grad=False)
         edgefeats = Variable(edgefeats, requires_grad=False)
     
-        weights = self._wnet(edgefeats)
+        weights = self._fnet(edgefeats)
         if weights.size(1) == self._in_channels*self._out_channels:
             weights = weights.view(-1, self._in_channels, self._out_channels)
             

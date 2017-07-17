@@ -50,7 +50,17 @@ def cloud_edge_feats(edges, args):
 
         
         
-def sydney_dataset(args, pyramid_conf, training):
+        
+        
+def get_sydney_info(args):
+    return {
+        'feats': 1,
+        'edge_feats': (3 if 'eukl' in args.pc_attribs else 0) + (3 if 'polar' in args.pc_attribs else 0),
+        'classes': 14,
+    }
+        
+        
+def get_sydney(args, pyramid_conf, training):
 
     names = ['t','intensity','id', 'x','y','z', 'azimuth','range','pid']
     formats = ['int64', 'uint8', 'uint8', 'float32', 'float32', 'float32', 'float32', 'float32', 'int32']
@@ -85,7 +95,8 @@ def sydney_dataset(args, pyramid_conf, training):
                 
             P = np.dot(P, M.T)
   
-        # coarsen to initial resolution (btw, axis-aligned quantization of rigidly transformed cloud adds jittering noise)    
+        # coarsen to initial resolution (btw, axis-aligned quantization of rigidly transformed cloud adds jittering noise)
+        P -= np.min(P,axis=0) #move to positive octant (voxelgrid has fixed boundaries at axes planes)
         PF = np.hstack([P, F]).astype(np.float32)
         PF_filtered = pcu.voxelgrid(pcl.PointCloud_PointXYZI(PF), pyramid_conf[0][0]).to_array() # aggregates intensities too (note pcl wrapper bug: only int intensities accepted)
         F = PF_filtered[:,3]/255 - 0.5 # laser return intensities in [-0.5,0.5]

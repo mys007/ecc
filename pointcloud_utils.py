@@ -79,7 +79,7 @@ def create_graph_pyramid(args, cloud, pyramid_conf):
         graphs.append(graph)   
         if prev_res != res:
             pooldata.append((poolmap, graphs[-2], graphs[-1]))
-            
+        #print(cloud, len(graph.nodes()), len(graph.edges()))        
         prev_res = res
 
     return graphs, pooldata
