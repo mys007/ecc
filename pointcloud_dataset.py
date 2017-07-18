@@ -10,7 +10,6 @@ import transforms3d
 
 import torch
 import torchnet as tnt
-import networkx as nx
 
 import pcl
 import pointcloud_utils as pcu
@@ -24,7 +23,7 @@ SYDNEY_PATH = './datasets/sydney/'
 
 def cloud_edge_feats(edges, args):
     columns = []
-    offsets = np.asarray([ e['d'] for e in edges ])
+    offsets = np.asarray([ e['offset'] for e in edges ])
     
     # todo: possible discretization, round to multiples of min(offsets[offsets>0]) ?
     

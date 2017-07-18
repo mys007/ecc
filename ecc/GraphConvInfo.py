@@ -13,7 +13,7 @@ class GraphConvInfo
 """
 from __future__ import division
 import six
-import networkx as nx
+import igraph
 import torch
 import math
 
@@ -26,37 +26,6 @@ import math
 # edge_feat_func - receives list of edge attributes (dict), returns Tensor for edge features and LongTensor of inverse indices if edge clustering was performed (there are less edge features than edges, as some are used repeatedly)
     
 
-class EdgeFeatureCache(object):
-    """ Edge features cache, useful if GraphConvInfo is repeatedly created with varied subgraphs of fixed graphs. Assumption: edge features are independent of actual graph structure. Edges are hashed in tuple form (graph_index, node1, node2). """
-    def __init__(self, *args, **kwargs):
-        if len(args)>0 or len(kwargs)>0:
-            self.set_batch(*args, **kwargs)
-
-    def set_batch(self, graphs, edge_feat_func, self_loops=True):           
-        graphs = graphs if isinstance(graphs,(list,tuple)) else [graphs]
-        edges = []
-        self._edgemap = {}
-                
-        for i,G in enumerate(graphs):
-            for node in G.nodes():
-                if self_loops:
-                    self._edgemap[(i,node,node)] = len(edges)
-                    edges.append(G[node][node] if node in G[node] else {'self_loop':1})
-                
-                for (u,v) in G.in_edges_iter(node):
-                    assert v==node
-                    if u==v: continue
-                    self._edgemap[(i,u,v)] = len(edges)
-                    edges.append(G[u][v])
-
-        self._edgefeats, self._idxe = edge_feat_func(edges) #note: clusters will be the same for all selects
-
-    def select(self, edgelist):
-        idx = [self._edgemap[e] for e in edgelist]
-        if self._idxe is not None:
-            return self._edgefeats, torch.index_select(self._idxe, 0, torch.LongTensor(idx))
-        else:
-            return torch.index_select(self._edgefeats, 0, torch.LongTensor(idx)), None 
 
     
     
@@ -76,14 +45,12 @@ class GraphConvInfo(object):
     def set_batch(self, graphs, edge_feat_func, edge_cache=None, self_loops=True, out_graphs=None):
                
         def degree_dicts(G):
-            indeg = G.in_degree(G.nodes())
-            for n,d in six.iteritems(indeg):
-                if not self_loops and G.has_edge(n,n): indeg[n] = d-1
-                if self_loops and not G.has_edge(n,n): indeg[n] = d+1                        
-            outdeg = G.out_degree(G.nodes())
-            for n,d in six.iteritems(outdeg):
-                if not self_loops and G.has_edge(n,n): outdeg[n] = d-1
-                if self_loops and not G.has_edge(n,n): outdeg[n] = d+1
+            indeg = G.indegree(G.vs, loops=False)
+            if self_loops:
+                indeg = [d+1 for d in indeg]                    
+            outdeg = G.outdegree(G.vs, loops=False)
+            if self_loops:
+                outdeg = [d+1 for d in outdeg]            
             return indeg, outdeg
             
         graphs = graphs if isinstance(graphs,(list,tuple)) else [graphs]
@@ -97,33 +64,33 @@ class GraphConvInfo(object):
                 
         for i,G in enumerate(graphs):
         
-            nodes = sorted(G.nodes())
-            map = dict(zip(nodes, range(p, p+len(G.nodes()))))
+            nodes = G.vs
+            map = dict(zip(nodes, range(p, p+G.vcount())))
             indeg, outdeg = degree_dicts(G)
             
             for node in nodes:
-                if out_graphs is not None and node not in out_graphs[i]: #strided convolution (compute only vertices present in out_graphs)
-                    continue
+                #if out_graphs is not None and node not in out_graphs[i]: #strided convolution (compute only vertices present in out_graphs)
+                #    continue
 
                 if self_loops:
                     idxn.append(map[node]) #self-loop (create if necessary)
                     idxd.append(map[node])
-                    edges_id.append((i,node,node))                    
-                    edges.append(G[node][node] if node in G[node] else {'self_loop':1})
-                    edges_degnorm.append(1.0/math.sqrt(indeg[node]*outdeg[node]))
+                    edges_id.append((i,node,node))         
+                    edges.append(G.es[G.get_eid(node,node)].attributes() if G.get_eid(node,node,error=False)>=0 else {'self_loop':1})
+                    #edges_degnorm.append(1.0/math.sqrt(indeg[node]*outdeg[node]))
                 
-                for (u,v) in G.in_edges_iter(node):
-                    assert v==node
+                for u in G.predecessors(node):
+                    v=node
                     if u==v: continue
-                    idxn.append(map[u])
+                    idxn.append(map[G.vs[u]])
                     idxd.append(map[v])
                     edges_id.append((i,u,v))
-                    edges.append(G[u][v])
-                    edges_degnorm.append(1.0/math.sqrt(indeg[v]*outdeg[u])) #~normalized Laplacian of unweighted graph
+                    edges.append(G.es[G.get_eid(u,v)].attributes())
+                    #edges_degnorm.append(1.0/math.sqrt(indeg[v]*outdeg[u])) #~normalized Laplacian of unweighted graph
                     
-                self._degrees.append(indeg[node])        
+                self._degrees.append(indeg[node.index])        
                 
-            p += len(G.nodes())
+            p += G.vcount()
 
         if edge_cache is not None:
             self._edgefeats, self._idxe = edge_cache.select(edges_id)
@@ -143,39 +110,3 @@ class GraphConvInfo(object):
                self._degrees,               
                self._edgefeats.cuda() if cuda else self._edgefeats)
         # TODO: should cache internal cuda buffers so that convolutions using the same GI share data? But maybe wasting mem?
-
-    def get_degnorm(self, cuda):
-        return self._edges_degnorm.cuda() if cuda else self._edges_degnorm
-
-    def get_idxd(self, cuda):
-        return self._idxd.cuda() if cuda else self._idxd
-        
-    # def serialize(self):
-        # return [self._idxn, self._idxd, self._idxe, torch.LongTensor(self._degrees), self._edgefeats, self._edges_degnorm]
-   
-    # def deserialize(self, data):
-        # self._idxn, self._idxd, self._idxe, self._degrees, self._edgefeats, self._edges_degnorm = data
-        # self._degrees = list(self._degrees)
-        
-    @staticmethod
-    def get_node_features(graphs, features):
-        # - list of graphs and list of tensors or just one tensor
-        # - assumes that `features` are those of graphs with nodes 0:n and `graphs` are some subgraphs of these
-        graphs = graphs if isinstance(graphs,(list,tuple)) else [graphs]
-        features = features if isinstance(features,(list,tuple)) else [features]
-        assert len(features) == 1 or len(features) == len(graphs)
-        
-        n = 0
-        for G in graphs:
-            n += len(G.nodes())   
-        destfeat = features[0].new(n, features[0].size(1))
-        
-        p = 0
-        for i,G in enumerate(graphs):
-            n = len(G.nodes())
-            nodes = sorted(G.nodes())
-            srcfeat = features[i] if len(features)>1 else features[0]
-            torch.index_select(srcfeat, 0, torch.LongTensor(nodes), out=destfeat.narrow(0,p,n))
-            p += n
-        
-        return destfeat    

@@ -8,7 +8,7 @@ import numpy as np
 import math
 import transforms3d
 import pcl
-import networkx as nx
+import igraph
 from collections import defaultdict
 
 RADIUS_MAX_K = 100
@@ -37,16 +37,15 @@ def create_graph(cloud, knn, radius, kd=None):
         indices, sqr_distances = kd.radius_search_for_cloud(cloud, radius, RADIUS_MAX_K)
         
     edges = []
+    offsets = []
     for i in range(num_nodes):    
         for j in range(indices.shape[1]): #includes self-loops
             idx = indices[i][j]
             if j>0 and idx==0 and sqr_distances[i][j]<1e-8: continue
-            diff = xyz[i] - xyz[idx]
-            edges.append((idx,i,{'d':diff}))
+            edges.append((idx,i))
+            offsets.append(xyz[i] - xyz[idx])
             
-    G = nx.DiGraph()
-    G.add_nodes_from(range(num_nodes))                
-    G.add_edges_from(edges)    
+    G = igraph.Graph(n=num_nodes, edges=edges, directed=True, edge_attrs={'offset':offsets})
     return G, kd         
     
 
