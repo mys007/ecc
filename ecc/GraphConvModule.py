@@ -64,7 +64,7 @@ class GraphConvFunction(Function):
             
             #torch.cuda.synchronize()
             #t = time.time()
-            
+
             torch.index_select(input, 0, self._idxn.narrow(0,starte,nume), out=sel_input)
             
             if self._idxe is not None:
@@ -312,7 +312,6 @@ class GraphConvModule(nn.Module):
         self._aggr = GraphConvFunction.AGGR_MEAN if self._degree_normalization=='' else GraphConvFunction.AGGR_SUM
         if aggr=='sum': self._aggr = GraphConvFunction.AGGR_SUM
         if aggr=='max': self._aggr = GraphConvFunction.AGGR_MAX
-        print(self._aggr)
         
         self.set_info(gc_info)
         

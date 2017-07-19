@@ -33,73 +33,37 @@ class GraphConvInfo(object):
 
     def __init__(self, *args, **kwargs):
         self._idxn = None           #index into source node features
-        self._idxd = None           #index into dest node features (in the original graph; used for rebuilding adjacency matrix in coo format)
         self._idxe = None           #index into edge features (or None if linear, i.e. no clustering)
         self._degrees = None        #in-degrees of output nodes
         self._edgefeats = None      #edge features
-        self._edges_degnorm = None  #multiplicative constant for each regressed weights (used to simulate normalized Laplacian weighting, 1/sqrt(deg(v)*deg(u))
         if len(args)>0 or len(kwargs)>0:
             self.set_batch(*args, **kwargs)
-
-            
-    def set_batch(self, graphs, edge_feat_func, edge_cache=None, self_loops=True, out_graphs=None):
-               
-        def degree_dicts(G):
-            indeg = G.indegree(G.vs, loops=False)
-            if self_loops:
-                indeg = [d+1 for d in indeg]                    
-            outdeg = G.outdegree(G.vs, loops=False)
-            if self_loops:
-                outdeg = [d+1 for d in outdeg]            
-            return indeg, outdeg
+      
+    def set_batch(self, graphs, edge_feat_func):
             
         graphs = graphs if isinstance(graphs,(list,tuple)) else [graphs]
         p = 0
-        idxn = [] #source nodes
-        idxd = [] #dest nodes
+        idxn = []
         self._degrees = []
         edges = []
-        edges_id = []
-        edges_degnorm = []
+        uu = []
                 
         for i,G in enumerate(graphs):
         
-            nodes = G.vs
-            map = dict(zip(nodes, range(p, p+G.vcount())))
-            indeg, outdeg = degree_dicts(G)
+            indeg = G.indegree(G.vs, loops=True) # we silently assume that self-loops are in the graphs already
             
-            for node in nodes:
-                #if out_graphs is not None and node not in out_graphs[i]: #strided convolution (compute only vertices present in out_graphs)
-                #    continue
-
-                if self_loops:
-                    idxn.append(map[node]) #self-loop (create if necessary)
-                    idxd.append(map[node])
-                    edges_id.append((i,node,node))         
-                    edges.append(G.es[G.get_eid(node,node)].attributes() if G.get_eid(node,node,error=False)>=0 else {'self_loop':1})
-                    #edges_degnorm.append(1.0/math.sqrt(indeg[node]*outdeg[node]))
-                
-                for u in G.predecessors(node):
-                    v=node
-                    if u==v: continue
-                    idxn.append(map[G.vs[u]])
-                    idxd.append(map[v])
-                    edges_id.append((i,u,v))
+            for v in range(G.vcount()):               
+                for u in G.predecessors(v):    # TODO: better iterate over edges
+                    idxn.append(u+p)
                     edges.append(G.es[G.get_eid(u,v)].attributes())
-                    #edges_degnorm.append(1.0/math.sqrt(indeg[v]*outdeg[u])) #~normalized Laplacian of unweighted graph
                     
-                self._degrees.append(indeg[node.index])        
+                self._degrees.append(indeg[v])        
                 
             p += G.vcount()
 
-        if edge_cache is not None:
-            self._edgefeats, self._idxe = edge_cache.select(edges_id)
-        else:
-            self._edgefeats, self._idxe = edge_feat_func(edges)
-          
-        self._edges_degnorm = torch.Tensor(edges_degnorm)
+        self._edgefeats, self._idxe = edge_feat_func(edges)
+        
         self._idxn = torch.LongTensor(idxn)
-        self._idxd = torch.LongTensor(idxd)
         if self._idxe is not None:
             assert self._idxe.numel() == self._idxn.numel()
             

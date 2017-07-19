@@ -23,9 +23,8 @@ class GraphPoolInfo(object):
         p = 0        
               
         for map, G_from, G_to in zip(poolmaps, graphs_from, graphs_to):
-            nodes = G_to.vs
-            for node in nodes:
-                nlist = map.get(node.index, [])
+            for v in range(G_to.vcount()):
+                nlist = map.get(v, [])
                 idxn.extend([n+p for n in nlist])
                 self._degrees.append(len(nlist))
             p += G_from.vcount()

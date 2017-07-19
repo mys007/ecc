@@ -24,27 +24,34 @@ def voxelgrid(cloud, leaf_size):
     vg.set_leaf_size(leaf_size, leaf_size, leaf_size)       
     return vg.filter()    
     
-    
-    
+     
 def create_graph(cloud, knn, radius, kd=None):
     xyz = cloud.to_array()[:,:3]   
     num_nodes = xyz.shape[0]
-    
+
     kd = cloud.make_kdtree_flann() if kd is None else kd
     if knn:
         indices, sqr_distances = kd.nearest_k_search_for_cloud(cloud, radius)
     else:
-        indices, sqr_distances = kd.radius_search_for_cloud(cloud, radius, RADIUS_MAX_K)
+        indices, sqr_distances = kd.radius_search_for_cloud(cloud, radius, RADIUS_MAX_K)    
         
-    edges = []
-    offsets = []
-    for i in range(num_nodes):    
-        for j in range(indices.shape[1]): #includes self-loops
-            idx = indices[i][j]
-            if j>0 and idx==0 and sqr_distances[i][j]<1e-8: continue
-            edges.append((idx,i))
-            offsets.append(xyz[i] - xyz[idx])
-            
+    sqr_distances[:,0] += 1 #includes self-loops
+    valid = np.logical_or(indices > 0, sqr_distances>1e-10)
+    rowi, coli = np.nonzero(valid)
+    idx = indices[(rowi,coli)]
+    
+    edges = np.vstack([idx, rowi]).T.tolist()
+    offsets = xyz[rowi] - xyz[idx]
+    
+    # edges = []    very slow!
+    # offsets = []
+    # for i in range(num_nodes):    
+        # for j in range(indices.shape[1]): #includes self-loops
+            # idx = indices[i][j]
+            # if j>0 and idx==0 and sqr_distances[i][j]<1e-8: break
+            # edges.append((idx,i))
+            # offsets.append(xyz[i] - xyz[idx])
+  
     G = igraph.Graph(n=num_nodes, edges=edges, directed=True, edge_attrs={'offset':offsets})
     return G, kd         
     

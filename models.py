@@ -16,7 +16,7 @@ def create_fnet(nchannels, nfeat, nfeato, orthoinit, llbias):
             
 
 class CloudNetwork(nn.Module):
-    def __init__(self, config, nfeat, fnet_widths, fnet_orthoinit=True, fnet_llbias=True):
+    def __init__(self, config, nfeat, fnet_widths, fnet_orthoinit=True, fnet_llbias=True, edge_mem_limit=1e20):
     
         super(CloudNetwork, self).__init__()
 
@@ -56,7 +56,7 @@ class CloudNetwork(nn.Module):
                 assert len(self.pyramid_conf)>0, "Convolution needs defined graph"
 
                 fnet = create_fnet(fnet_widths, nfeat, nfeato, fnet_orthoinit, fnet_llbias)
-                gconv = ecc.GraphConvModule(nfeat, nfeato, fnet)
+                gconv = ecc.GraphConvModule(nfeat, nfeato, fnet, edge_mem_limit=edge_mem_limit)
                 self.gconvs.append((gconv, len(self.pyramid_conf)-1))
                 self.add_module(str(d), gconv)     
                 nfeat = nfeato
