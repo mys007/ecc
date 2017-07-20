@@ -1,3 +1,9 @@
+"""
+    Dynamic Edge-Conditioned Filters in Convolutional Neural Networks on Graphs
+    https://github.com/mys007/ecc
+    https://arxiv.org/abs/1704.02901
+    2017 Martin Simonovsky
+"""
 from __future__ import division
 from __future__ import print_function
 from builtins import range
@@ -5,11 +11,18 @@ from builtins import range
 import random
 import numpy as np
 import torch
-import networkx as nx
 
 import ecc
 
 def graph_info_collate_classification(batch, edge_func):
+    """ Collates a list of dataset samples into a single batch. We assume that all samples have the same number of resolutions.
+    
+    Each sample is a tuple of following elements:
+        features: 2D Tensor of node features
+        classes: LongTensor of class ids
+        graphs: list of graphs, each for one resolution
+        pooldata: list of triplets, each for one resolution: (pooling map, finer graph, coarser graph)   
+    """
     features, classes, graphs, pooldata = list(zip(*batch))
     graphs_by_layer = list(zip(*graphs))
     pooldata_by_layer = list(zip(*pooldata))
@@ -29,6 +42,7 @@ def graph_info_collate_classification(batch, edge_func):
     
     
 def unique_rows(data):
+    """ Filters unique rows from a 2D np array and also returns inverse indices. Used for edge feature compaction. """
     # https://stackoverflow.com/questions/16970982/find-unique-rows-in-numpy-array
     uniq, indices = np.unique(data.view(data.dtype.descr * data.shape[1]), return_inverse=True)
     return uniq.view(data.dtype).reshape(-1, data.shape[1]), indices

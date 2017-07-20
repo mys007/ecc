@@ -1,3 +1,9 @@
+"""
+    Dynamic Edge-Conditioned Filters in Convolutional Neural Networks on Graphs
+    https://github.com/mys007/ecc
+    https://arxiv.org/abs/1704.02901
+    2017 Martin Simonovsky
+"""
 from __future__ import division
 from __future__ import print_function
 from builtins import range
@@ -6,14 +12,26 @@ import torch
 
 
 class GraphPoolInfo(object):          
-
+    """ Holds information about pooling in a vectorized form useful to `GraphPoolModule`. 
+    
+    We assume that the node feature tensor (given to `GraphPoolModule` as input) is ordered by igraph vertex id, e.g. the fifth row corresponds to vertex with id=4. Batch processing is realized by concatenating all graphs into a large graph of disconnected components (and all node feature tensors into a large tensor).
+    """
+    
     def __init__(self, *args, **kwargs):
-        self._idxn = None           #index into source node features
-        self._degrees = None        #in-degrees of output nodes
+        self._idxn = None           #indices into input tensor of convolution (node features)
+        self._degrees = None        #in-degrees of output nodes (slices _idxn)
         if len(args)>0 or len(kwargs)>0:
             self.set_batch(*args, **kwargs)
             
     def set_batch(self, poolmaps, graphs_from, graphs_to):
+        """ Creates a representation of a given batch of graph poolings.
+        
+        Parameters:
+        poolmaps: dict(s) mapping vertex id in coarsened graph to a list of vertex ids in input graph (defines pooling)
+        graphs_from: input graph(s)
+        graphs_to: coarsened graph(s)
+        """
+    
         poolmaps = poolmaps if isinstance(poolmaps,(list,tuple)) else [poolmaps]
         graphs_from = graphs_from if isinstance(graphs_from,(list,tuple)) else [graphs_from]
         graphs_to = graphs_to if isinstance(graphs_to,(list,tuple)) else [graphs_to]
@@ -29,15 +47,13 @@ class GraphPoolInfo(object):
                 self._degrees.append(len(nlist))
             p += G_from.vcount()
          
-        self._idxn = torch.LongTensor(idxn)                        
+        self._idxn = torch.LongTensor(idxn)
+
+    def cuda(self):
+        self._idxn = self._idxn.cuda()
         
-    def get_buffers(self, cuda):
-        return self._idxn.cuda() if cuda else self._idxn, self._degrees
+    def get_buffers(self):
+        """ Provides data to `GraphPoolModule`.
+        """    
+        return self._idxn, self._degrees
  
-        
-    # def serialize(self):
-        # return [self._idxn, self._idxd, self._idxe, torch.LongTensor(self._degrees), self._edgefeats, self._edges_degnorm]
-   
-    # def deserialize(self, data):
-        # self._idxn, self._idxd, self._idxe, self._degrees, self._edgefeats, self._edges_degnorm = data
-        # self._degrees = list(self._degrees)

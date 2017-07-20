@@ -1,3 +1,9 @@
+"""
+    Dynamic Edge-Conditioned Filters in Convolutional Neural Networks on Graphs
+    https://github.com/mys007/ecc
+    https://arxiv.org/abs/1704.02901
+    2017 Martin Simonovsky
+"""
 from __future__ import division
 from __future__ import print_function
 from builtins import range
@@ -19,21 +25,24 @@ import pointcloud_utils as pcu
 import ecc
 
 
-SYDNEY_PATH = './datasets/sydney/'
+SYDNEY_PATH = './datasets/sydney-urban-objects-dataset/'
 MODELNET10_PATH = './datasets/modelnet10/'
 MODELNET40_PATH = './datasets/modelnet40/'
 
 
 def cloud_edge_feats(edges, args):
+    """ Defines edge features for `GraphConvInfo` in the case of point clouds. Assembles edge feature tensor given point offsets as edge attributes.    
+    """
+    
     columns = []
     offsets = np.asarray([ e['offset'] for e in edges ])
     
-    # todo: possible discretization, round to multiples of min(offsets[offsets>0]) ?
+    # todo: possible discretization, round to multiples of min(offsets[offsets>0]) ? Or k-means (slow?)?
     
-    if 'eukl' in args.pc_attribs:
+    if 'eukl' in args.pc_attribs: #Euclidean offset
         columns.append(offsets)
     
-    if 'polar' in args.pc_attribs:
+    if 'polar' in args.pc_attribs: #3D polar coordinates
         p1 = np.linalg.norm(offsets, axis=1)
         p2 = np.arctan2(offsets[:,1], offsets[:,0])
         p3 = np.arccos(offsets[:,2] / (p1 + 1e-6))
@@ -52,8 +61,6 @@ def cloud_edge_feats(edges, args):
 
         
         
-        
-        
 def get_sydney_info(args):
     return {
         'feats': 1,
@@ -61,13 +68,14 @@ def get_sydney_info(args):
         'classes': 14,
         'test_set_expansion': 1,
     }
-        
-        
+                
 def get_sydney(args, pyramid_conf, training):
+    """ Returns dataset for Sydney Urban Objects.
+    """
 
     names = ['t','intensity','id', 'x','y','z', 'azimuth','range','pid']
     formats = ['int64', 'uint8', 'uint8', 'float32', 'float32', 'float32', 'float32', 'float32', 'int32']
-    binType = np.dtype( dict(names=names, formats=formats) ) # official read-bin.py from sydney
+    binType = np.dtype( dict(names=names, formats=formats) ) # official read-bin.py from sydney toolkit
     
     classmap = {'4wd':0, 'building':1, 'bus':2, 'car':3, 'pedestrian':4, 'pillar':5, 'pole':6, 'traffic_lights':7, 
                 'traffic_sign':8, 'tree':9, 'truck':10, 'trunk':11, 'ute':12, 'van':13}
@@ -126,7 +134,7 @@ def get_sydney(args, pyramid_conf, training):
 
 def get_modelnet_info(args):
     return {
-        'feats': 1,
+        'feats': 1, #input feature channels
         'edge_feats': (3 if 'eukl' in args.pc_attribs else 0) + (3 if 'polar' in args.pc_attribs else 0),
         'classes': 10 if args.dataset=='modelnet10' else 40,
         'test_set_expansion': 12, #over orientations
@@ -134,6 +142,9 @@ def get_modelnet_info(args):
     
 
 def get_modelnet(args, pyramid_conf, training):
+    """ Returns dataset for ModelNet10/40
+    """
+    
     if args.dataset=='modelnet10':
         path = MODELNET10_PATH
         classmap = {'bathtub':0, 'bed':1, 'chair':2, 'desk':3, 'dresser':4, 'monitor':5, 'night_stand':6, 'sofa':7, 'table':8, 'toilet':9}
@@ -147,7 +158,7 @@ def get_modelnet(args, pyramid_conf, training):
     def loader(filename, test_angle=None):
         P = pcl.load(filename).to_array()
         cls = classmap['_'.join(os.path.basename(filename).split('_')[:-1])] 
-        F = np.zeros((P.shape[0],1), dtype=np.float32) # no point features in modelnet
+        F = np.ones((P.shape[0],1), dtype=np.float32) # no point features in modelnet
         
         #transform into ball of diameter 32 (obj scale in modelnet has no meaning, original meshes have random sizes) 
         # (in the paper we used a unit ball and ./32 grid sizes, this is equivalent in effect)
@@ -191,6 +202,7 @@ def get_modelnet(args, pyramid_conf, training):
     if training:
         return create_dataset()
     else:
+        # 12-times data augmentation by rotation (done also in previous work)
         datasets = []
         for a in range(12):
             datasets.append(create_dataset(a/12 * 2*math.pi))

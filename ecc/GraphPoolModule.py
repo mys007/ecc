@@ -1,14 +1,23 @@
+"""
+    Dynamic Edge-Conditioned Filters in Convolutional Neural Networks on Graphs
+    https://github.com/mys007/ecc
+    https://arxiv.org/abs/1704.02901
+    2017 Martin Simonovsky
+"""
+from __future__ import division
+from __future__ import print_function
+from builtins import range
+
 import torch
 import torch.nn as nn
-import torchnet as tnt
-import time
 from torch.autograd import Variable, Function
 from .GraphPoolInfo import GraphPoolInfo
 
 
-#intervals = [tnt.meter.AverageValueMeter(), tnt.meter.AverageValueMeter(), tnt.meter.AverageValueMeter()]
-
 class GraphPoolFunction(Function):
+    """ Computes node feature aggregation for each node of the coarsened graph. The evaluation is computed in blocks of size `edge_mem_limit` to reduce peak memory load. See `GraphPoolInfo` for info on `idxn, degs`.
+    """
+
     AGGR_MEAN = 0
     AGGR_MAX = 1
 
@@ -18,7 +27,6 @@ class GraphPoolFunction(Function):
         self._degs = degs
         self._edge_mem_limit = edge_mem_limit
         self._aggr = aggr
-
                 
     def forward(self, input):
         output = input.new(len(self._degs), input.size(1))
@@ -28,6 +36,7 @@ class GraphPoolFunction(Function):
         sel_input = input.new()
         self._input_size = input.size()
         
+        # loop over blocks of output nodes
         startd, starte = 0, 0
         while startd < len(self._degs):
             numd, nume = 0, 0
@@ -38,11 +47,9 @@ class GraphPoolFunction(Function):
                 else:
                     break
             
-            #torch.cuda.synchronize()
-            #t = time.time()
-            
             torch.index_select(input, 0, self._idxn.narrow(0,starte,nume), out=sel_input)
             
+            # aggregate over nodes
             k = 0
             for i in range(startd, startd+numd):
                 if self._degs[i]>0:
@@ -53,23 +60,18 @@ class GraphPoolFunction(Function):
                 else:
                     output[i].fill_(0)
                 k = k + self._degs[i]
- 
-            #torch.cuda.synchronize()
-            #intervals[2].add(1000*(time.time()-t))
                     
             startd += numd
             starte += nume  
-
-        #print(intervals[0].value(), intervals[1].value(), intervals[2].value())    
     
         return output
 
-
-
+        
     def backward(self, grad_output):
         grad_input = grad_output.new(self._input_size).fill_(0)
         grad_sel_input = grad_output.new()
 
+        # loop over blocks of output nodes
         startd, starte = 0, 0
         while startd < len(self._degs):
             numd, nume = 0, 0
@@ -82,6 +84,7 @@ class GraphPoolFunction(Function):
             
             grad_sel_input.resize_(nume, grad_output.size(1))
 
+            # grad wrt input
             k = 0
             for i in range(startd, startd+numd):
                 if self._degs[i]>0:
@@ -103,25 +106,34 @@ class GraphPoolFunction(Function):
         
         
 class GraphPoolModule(nn.Module):
-    def __init__(self, aggr, gc_info=None, edge_mem_limit=1e20):
+    """ Performs graph pooling.
+        The input should be a 2D tensor of size (# nodes, `in_channels`). Multiple graphs can be concatenated in the same tensor (minibatch).    
+    
+    Parameters:
+    aggr: aggregation type (GraphPoolFunction.AGGR_MEAN, GraphPoolFunction.AGGR_MAX)
+    gp_info: GraphPoolInfo object containing node mapping information, can be also set with `set_info()` method.
+    edge_mem_limit: block size (number of evaluated edges in parallel), a low value reduces peak memory.
+    """
+    
+    def __init__(self, aggr, gp_info=None, edge_mem_limit=1e20):
         super(GraphPoolModule, self).__init__()
         
         self._aggr = aggr
         self._edge_mem_limit = edge_mem_limit       
-        self.set_info(gc_info)
+        self.set_info(gp_info)
         
     def set_info(self, gp_info):
         self._gpi = gp_info
         
     def forward(self, input):       
-        idxn, degs = self._gpi.get_buffers(input.is_cuda)
+        idxn, degs = self._gpi.get_buffers()
         return GraphPoolFunction(idxn, degs, self._aggr, self._edge_mem_limit)(input)
         
         
 class GraphAvgPoolModule(GraphPoolModule):
-    def __init__(self, gc_info=None, edge_mem_limit=1e20):
-        super(GraphAvgPoolModule, self).__init__(GraphPoolFunction.AGGR_MEAN, gc_info, edge_mem_limit)        
+    def __init__(self, gp_info=None, edge_mem_limit=1e20):
+        super(GraphAvgPoolModule, self).__init__(GraphPoolFunction.AGGR_MEAN, gp_info, edge_mem_limit)        
         
 class GraphMaxPoolModule(GraphPoolModule):
-    def __init__(self, gc_info=None, edge_mem_limit=1e20):
-        super(GraphMaxPoolModule, self).__init__(GraphPoolFunction.AGGR_MAX, gc_info, edge_mem_limit)                
+    def __init__(self, gp_info=None, edge_mem_limit=1e20):
+        super(GraphMaxPoolModule, self).__init__(GraphPoolFunction.AGGR_MAX, gp_info, edge_mem_limit)                

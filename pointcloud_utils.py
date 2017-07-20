@@ -1,3 +1,9 @@
+"""
+    Dynamic Edge-Conditioned Filters in Convolutional Neural Networks on Graphs
+    https://github.com/mys007/ecc
+    https://arxiv.org/abs/1704.02901
+    2017 Martin Simonovsky
+"""
 from __future__ import division
 from __future__ import print_function
 from builtins import range
@@ -15,7 +21,7 @@ RADIUS_MAX_K = 100
 
 def dropout(P,F,p):
     """ Removes points with probability p from vector of points and features"""
-    idx = random.sample(range(P.shape[0]), math.ceil((1-p)*P.shape[0]))
+    idx = random.sample(range(P.shape[0]), int(math.ceil((1-p)*P.shape[0])))
     return P[idx,:], F[idx,:] if F is not None else None
     
 def voxelgrid(cloud, leaf_size):
@@ -26,6 +32,11 @@ def voxelgrid(cloud, leaf_size):
     
      
 def create_graph(cloud, knn, radius, kd=None):
+    """ Converts point cloud to graph by building neighborhood structure using kd-tree.
+    Parameters:
+    knn: true if using k-nn neighbors, false if using radius neighbors
+    radius: radius if not knn, k if knn
+    """
     xyz = cloud.to_array()[:,:3]   
     num_nodes = xyz.shape[0]
 
@@ -42,15 +53,6 @@ def create_graph(cloud, knn, radius, kd=None):
     
     edges = np.vstack([idx, rowi]).T.tolist()
     offsets = xyz[rowi] - xyz[idx]
-    
-    # edges = []    very slow!
-    # offsets = []
-    # for i in range(num_nodes):    
-        # for j in range(indices.shape[1]): #includes self-loops
-            # idx = indices[i][j]
-            # if j>0 and idx==0 and sqr_distances[i][j]<1e-8: break
-            # edges.append((idx,i))
-            # offsets.append(xyz[i] - xyz[idx])
   
     G = igraph.Graph(n=num_nodes, edges=edges, directed=True, edge_attrs={'offset':offsets})
     return G, kd         
@@ -69,7 +71,11 @@ def create_pooling_map(cloud_src, cloud_dst):
      
      
 def create_graph_pyramid(args, cloud, pyramid_conf):
-
+    """ Builds a pyramid of graphs and pooling operations corresponding to progressively coarsened point cloud using voxelgrid.
+    Parameters:
+    pyramid_conf: list of tuples (grid resolution, neigborhood radius/k), defines the pyramid
+    """
+    
     graphs = []
     pooldata = []
     prev_res = pyramid_conf[0][0] # assuming the caller performed the initial sampling.
@@ -85,49 +91,6 @@ def create_graph_pyramid(args, cloud, pyramid_conf):
         graphs.append(graph)   
         if prev_res != res:
             pooldata.append((poolmap, graphs[-2], graphs[-1]))
-        #print(cloud, len(graph.nodes()), len(graph.edges()))        
         prev_res = res
 
     return graphs, pooldata
-
-        
-# pool: node labeling can be independent in graphs. just create mapping.
-# conv-stride: gets 2 clouds, returns labels for the second
-# conv: gets 1 cloud, 
-
-
-
-
-
-
-# pooling: creates list of lists   ... or it will be just a special function to pass to GraphPoolInfo?
-
-# needs: leafsz, reach = list of pairs. leafsz changes -> mp. only reach changes -> conv
-
-# batch merging function - gi
-
-# model: how does it assign info->conv, what belongs to what? As before: generate the list of unique tuples, give it to create_graph.
-
-# c_rad_16
-# m_res_(rad):  voxelgrid,mp ... but what reach
-
-
-# c_res_rad_16
-# m_res_rad
-# ... can get only smaller
-# ... keeps up-to-date pair, once updated, append to list of pairs and notes id to assign Info later
-# -> here I get the list of pairs. leafsz changes -> pooling_map (or later strided_conv). only reach changes -> cloud_to_graph.
-
-# merging: 
-
-
-
-
-
-### like in paper:
-#initial_res_rad
-#c                          [c_res_rad for strided one]
-#m_res_rad
-#g_rad
-
-
