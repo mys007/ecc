@@ -12,7 +12,8 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable, Function
 from .GraphPoolInfo import GraphPoolInfo
-
+from . import cuda_kernels
+from . import utils
 
 class GraphPoolFunction(Function):
     """ Computes node feature aggregation for each node of the coarsened graph. The evaluation is computed in blocks of size `edge_mem_limit` to reduce peak memory load. See `GraphPoolInfo` for info on `idxn, degs`.
@@ -21,45 +22,45 @@ class GraphPoolFunction(Function):
     AGGR_MEAN = 0
     AGGR_MAX = 1
 
-    def __init__(self, idxn, degs, aggr, edge_mem_limit=1e20):
+    def __init__(self, idxn, degs, degs_gpu, aggr, edge_mem_limit=1e20):
         super(Function, self).__init__()
         self._idxn = idxn
         self._degs = degs
-        self._edge_mem_limit = edge_mem_limit
+        self._degs_gpu = degs_gpu
         self._aggr = aggr
+        self._shards = utils.get_edge_shards(degs, edge_mem_limit)
                 
     def forward(self, input):
-        output = input.new(len(self._degs), input.size(1))
+        output = input.new(self._degs.numel(), input.size(1))
         if self._aggr==GraphPoolFunction.AGGR_MAX:
-            self._max_indices = self._idxn.new(len(self._degs), input.size(1)).fill_(-1)
+            self._max_indices = self._idxn.new(self._degs.numel(), input.size(1)).fill_(-1)
         
         sel_input = input.new()
         self._input_size = input.size()
         
         # loop over blocks of output nodes
         startd, starte = 0, 0
-        while startd < len(self._degs):
-            numd, nume = 0, 0
-            for d in range(startd, len(self._degs)):
-                if nume==0 or nume + self._degs[d] <= self._edge_mem_limit:
-                    nume += self._degs[d]
-                    numd += 1
-                else:
-                    break
+        for numd, nume in self._shards: 
             
             torch.index_select(input, 0, self._idxn.narrow(0,starte,nume), out=sel_input)
             
             # aggregate over nodes
-            k = 0
-            for i in range(startd, startd+numd):
-                if self._degs[i]>0:
-                    if self._aggr==GraphPoolFunction.AGGR_MEAN:
-                        torch.mean(sel_input.narrow(0,k,self._degs[i]), 0, out=output[i])
-                    elif self._aggr==GraphPoolFunction.AGGR_MAX:
-                        torch.max(sel_input.narrow(0,k,self._degs[i]), 0, out=(output[i], self._max_indices[i]))
-                else:
-                    output[i].fill_(0)
-                k = k + self._degs[i]
+            if self._idxn.is_cuda:
+                if self._aggr==GraphPoolFunction.AGGR_MEAN:
+                    cuda_kernels.avgpool_fw(output.narrow(0,startd,numd), sel_input, self._degs_gpu.narrow(0,startd,numd))            
+                elif self._aggr==GraphPoolFunction.AGGR_MAX:
+                    cuda_kernels.maxpool_fw(output.narrow(0,startd,numd), self._max_indices.narrow(0,startd,numd), sel_input, self._degs_gpu.narrow(0,startd,numd))        
+            else:
+                k = 0
+                for i in range(startd, startd+numd):
+                    if self._degs[i]>0:
+                        if self._aggr==GraphPoolFunction.AGGR_MEAN:
+                            torch.mean(sel_input.narrow(0,k,self._degs[i]), 0, out=output[i])
+                        elif self._aggr==GraphPoolFunction.AGGR_MAX:
+                            torch.max(sel_input.narrow(0,k,self._degs[i]), 0, out=(output[i], self._max_indices[i]))
+                    else:
+                        output[i].fill_(0)
+                    k = k + self._degs[i]
                     
             startd += numd
             starte += nume  
@@ -73,30 +74,29 @@ class GraphPoolFunction(Function):
 
         # loop over blocks of output nodes
         startd, starte = 0, 0
-        while startd < len(self._degs):
-            numd, nume = 0, 0
-            for d in range(startd, len(self._degs)):
-                if nume==0 or nume + self._degs[d] <= self._edge_mem_limit:
-                    nume += self._degs[d]
-                    numd += 1
-                else:
-                    break                    
+        for numd, nume in self._shards:                  
             
             grad_sel_input.resize_(nume, grad_output.size(1))
 
             # grad wrt input
-            k = 0
-            for i in range(startd, startd+numd):
-                if self._degs[i]>0:
-                    if self._aggr==GraphPoolFunction.AGGR_MEAN:
-                        torch.div(grad_output[i], self._degs[i], out=grad_sel_input[k])
-                        if self._degs[i]>1:
-                            grad_sel_input.narrow(0, k+1, self._degs[i]-1).copy_( grad_sel_input[k].expand(self._degs[i]-1,1,grad_output.size(1)) )
-                    elif self._aggr==GraphPoolFunction.AGGR_MAX:
-                        grad_sel_input.narrow(0, k, self._degs[i]).fill_(0).scatter_(0, self._max_indices[i].view(1,-1), grad_output[i].view(1,-1))
-                    k = k + self._degs[i]             
+            if self._idxn.is_cuda:
+                if self._aggr==GraphPoolFunction.AGGR_MEAN:
+                    cuda_kernels.avgpool_bw(grad_input, self._idxn.narrow(0,starte,nume), grad_output.narrow(0,startd,numd), self._degs_gpu.narrow(0,startd,numd))            
+                elif self._aggr==GraphPoolFunction.AGGR_MAX:
+                    cuda_kernels.maxpool_bw(grad_input, self._idxn.narrow(0,starte,nume), self._max_indices.narrow(0,startd,numd), grad_output.narrow(0,startd,numd), self._degs_gpu.narrow(0,startd,numd))  
+            else:
+                k = 0
+                for i in range(startd, startd+numd):
+                    if self._degs[i]>0:
+                        if self._aggr==GraphPoolFunction.AGGR_MEAN:
+                            torch.div(grad_output[i], self._degs[i], out=grad_sel_input[k])
+                            if self._degs[i]>1:
+                                grad_sel_input.narrow(0, k+1, self._degs[i]-1).copy_( grad_sel_input[k].expand(self._degs[i]-1,1,grad_output.size(1)) )
+                        elif self._aggr==GraphPoolFunction.AGGR_MAX:
+                            grad_sel_input.narrow(0, k, self._degs[i]).fill_(0).scatter_(0, self._max_indices[i].view(1,-1), grad_output[i].view(1,-1))
+                        k = k + self._degs[i]             
 
-            grad_input.index_add_(0, self._idxn.narrow(0,starte,nume), grad_sel_input)
+                grad_input.index_add_(0, self._idxn.narrow(0,starte,nume), grad_sel_input)
                     
             startd += numd
             starte += nume   
@@ -126,8 +126,8 @@ class GraphPoolModule(nn.Module):
         self._gpi = gp_info
         
     def forward(self, input):       
-        idxn, degs = self._gpi.get_buffers()
-        return GraphPoolFunction(idxn, degs, self._aggr, self._edge_mem_limit)(input)
+        idxn, degs, degs_gpu = self._gpi.get_buffers()
+        return GraphPoolFunction(idxn, degs, degs_gpu, self._aggr, self._edge_mem_limit)(input)
         
         
 class GraphAvgPoolModule(GraphPoolModule):

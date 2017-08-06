@@ -19,7 +19,7 @@ This is the official PyTorch port of the original Torch implementation of our CV
 
 2. The point cloud classification part of the code relies on the Point cloud library, which is unfortunately a bit troublesome to set up for Python. Install [PCL](http://pointclouds.org) and then its python wrapper from Sirokujira with `git clone https://github.com/Sirokujira/python-pcl.git ; cd python-pcl; pip install cython; python setup.py install`. While simple `sudo apt-get pcl` should work in theory, I had success with installing full-sized PCL 1.8 from sources with qhull support, which I got with `sudo apt-get install libqhull-dev` beforehand, and then manually took care of an file naming [issue](https://github.com/strawlab/python-pcl/issues/97) in PCL.
 
-3. Install additional Python packages: `pip install future python-igraph tqdm transforms3d`.
+3. Install additional Python packages: `pip install future python-igraph tqdm transforms3d pynvrtc cupy`.
 
 The code was tested on Ubuntu 14.04 with Python 2.7 or 3.6.
 
@@ -36,7 +36,7 @@ for FOLD in 0 1 2 3; do \
 CUDA_VISIBLE_DEVICES=0 python main.py --lr 0.1 --lr_steps '[200,245]' --epochs 250  --batch_size 32 \
 --model_config 'i_0.1_0.2, c_16,b,r, c_32,b,r, m_0.25_0.5, c_32,b,r, c_32,b,r, m_0.75_1.5, c_64,b,r, m_1.5_1.5,a_1e10_1e10, f_64,b,r,d_0.2,f_14' \
 --fnet_widths '[16,32]' --fnet_llbias 0 --pc_augm_scale 1.2 --pc_augm_mirror_prob 0.2 --pc_augm_input_dropout 0.1 \
---nworkers 3 --edgecompaction 0 --cvfold $FOLD --odir "results/sydney_{$FOLD}"; \
+--nworkers 3 --edgecompaction 0 --cvfold $FOLD --odir "results/sydney_${FOLD}"; \
 done
 ```
 
@@ -53,7 +53,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 --dataset modelnet10 --test_nth_epoch 25 --lr 0.1 --lr_steps '[50,100,150]' --epochs 175 --batch_size 64 --batch_parts 4 \
 --model_config 'i_1_2, c_16,b,r, c_32,b,r, m_2.5_7.5, c_32,b,r, c_32,b,r, m_7.5_22.5, c_64,b,r, m_1e10_1e10, f_64,b,r,d_0.2,f_10' \
 --fnet_llbias 0 --fnet_widths '[16,32]' --pc_augm_scale 1.2 --pc_augm_mirror_prob 0.2 --pc_augm_input_dropout 0.1 \
---nworkers 3 --edgecompaction 1 --odir results/modelnet10
+--nworkers 3 --edgecompaction 1 --edge_mem_limit 1000 --odir results/modelnet10
 ```
 
 To train the ModelNet40 model described in the paper, run:
@@ -90,9 +90,11 @@ TBD
 
 ## Issues
 
-* The model may be quite memory hungry for point cloud training especially, where nearly all edges have their unique edge features and thus also filter weights. This can be circumvented by evaluating the batch in multiple runs by setting `--batch_parts` to a divisor of `--batch_size`. An alternative would be to implement (randomized) clustering in `cloud_edge_feats()`.
-
-* Implementation currently doesn't utilize GPU at 100%, custom CUDA kernel will be uploaded soon.
+* The model may be quite memory hungry for point cloud training especially, where nearly all edges have their unique edge features and thus also filter weights. This can be currently  circumvented in three ways:
+	* Compacting edges with identical attributes by setting `--edgecompaction 1`
+	* Computing convolutions and poolings in shards of #E edges by `--edge_mem_limit #E`
+	* Evaluating the batch in multiple runs by setting `--batch_parts` to a divisor of `--batch_size`.
+A yet unimplemented alternative would be to implement (randomized) clustering in `cloud_edge_feats()`.
 
 
 ## Citation

@@ -12,37 +12,32 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable, Function
 from .GraphConvInfo import GraphConvInfo
-
+from . import cuda_kernels
+from . import utils
 
 class GraphConvFunction(Function):
     """ Computes matrix-vector products for each edge and averages them over respective nodes. The evaluation is computed in blocks of size `edge_mem_limit` to reduce peak memory load. See `GraphConvInfo` for info on `idxn, idxe, degs`.
     """
 
-    def __init__(self, in_channels, out_channels, idxn, idxe, degs, edge_mem_limit=1e20):
+    def __init__(self, in_channels, out_channels, idxn, idxe, degs, degs_gpu, edge_mem_limit=1e20):
         super(Function, self).__init__()
         self._in_channels = in_channels
         self._out_channels = out_channels
         self._idxn = idxn
         self._idxe = idxe
         self._degs = degs
-        self._edge_mem_limit = edge_mem_limit
-                       
+        self._degs_gpu = degs_gpu
+        self._shards = utils.get_edge_shards(degs, edge_mem_limit)
+       
     def forward(self, input, weights):
         self.save_for_backward(input, weights)              
 
-        output = input.new(len(self._degs), self._out_channels)       
+        output = input.new(self._degs.numel(), self._out_channels)       
         sel_input, sel_weights, products = input.new(), input.new(), input.new()
         
         # loop over blocks of output nodes
         startd, starte = 0, 0
-        while startd < len(self._degs):
-            numd, nume = 0, 0
-            for d in range(startd, len(self._degs)):
-                if nume==0 or nume + self._degs[d] <= self._edge_mem_limit:
-                    nume += self._degs[d]
-                    numd += 1
-                else:
-                    break
+        for numd, nume in self._shards:            
 
             # select sequence of matching pairs of node and edge weights            
             torch.index_select(input, 0, self._idxn.narrow(0,starte,nume), out=sel_input)
@@ -56,17 +51,20 @@ class GraphConvFunction(Function):
             torch.bmm(sel_input.unsqueeze(1), sel_weights, out=products) 
 
             # average over nodes
-            k = 0
-            for i in range(startd, startd+numd):
-                if self._degs[i]>0:
-                    torch.mean(products.narrow(0,k,self._degs[i]), 0, out=output[i])
-                else:
-                    output[i].fill_(0)
-                k = k + self._degs[i]
+            if self._idxn.is_cuda:
+                cuda_kernels.conv_aggregate_fw(output.narrow(0,startd,numd), products.view(-1,self._out_channels), self._degs_gpu.narrow(0,startd,numd))
+            else:
+                k = 0
+                for i in range(startd, startd+numd):
+                    if self._degs[i]>0:
+                        torch.mean(products.narrow(0,k,self._degs[i]), 0, out=output[i])
+                    else:
+                        output[i].fill_(0)
+                    k = k + self._degs[i]
  
             startd += numd
             starte += nume  
-
+        
         return output
 
     def backward(self, grad_output):
@@ -80,24 +78,20 @@ class GraphConvFunction(Function):
 
         # loop over blocks of output nodes
         startd, starte = 0, 0
-        while startd < len(self._degs):
-            numd, nume = 0, 0
-            for d in range(startd, len(self._degs)):
-                if nume==0 or nume + self._degs[d] <= self._edge_mem_limit:
-                    nume += self._degs[d]
-                    numd += 1
-                else:
-                    break                    
+        for numd, nume in self._shards:         
             
             grad_products.resize_(nume, self._out_channels)
 
-            k = 0
-            for i in range(startd, startd+numd):
-                if self._degs[i]>0:
-                    torch.div(grad_output[i], self._degs[i], out=grad_products[k])
-                    if self._degs[i]>1:
-                        grad_products.narrow(0, k+1, self._degs[i]-1).copy_( grad_products[k].expand(self._degs[i]-1,1,self._out_channels) )
-                    k = k + self._degs[i]    
+            if self._idxn.is_cuda:
+                cuda_kernels.conv_aggregate_bw(grad_products, grad_output.narrow(0,startd,numd), self._degs_gpu.narrow(0,startd,numd))
+            else:           
+                k = 0
+                for i in range(startd, startd+numd):
+                    if self._degs[i]>0:
+                        torch.div(grad_output[i], self._degs[i], out=grad_products[k])
+                        if self._degs[i]>1:
+                            grad_products.narrow(0, k+1, self._degs[i]-1).copy_( grad_products[k].expand(self._degs[i]-1,1,self._out_channels) )
+                        k = k + self._degs[i]    
 
             # grad wrt weights
             torch.index_select(input, 0, self._idxn.narrow(0,starte,nume), out=sel_input)
@@ -151,7 +145,7 @@ class GraphConvModule(nn.Module):
     
     def forward(self, input):       
         # get graph structure information tensors
-        idxn, idxe, degs, edgefeats = self._gci.get_buffers()
+        idxn, idxe, degs, degs_gpu, edgefeats = self._gci.get_buffers()
         edgefeats = Variable(edgefeats, requires_grad=False)
         
         # evalute and reshape filter weights
@@ -159,7 +153,7 @@ class GraphConvModule(nn.Module):
         assert input.dim()==2 and weights.dim()==2 and weights.size(1) == self._in_channels*self._out_channels
         weights = weights.view(-1, self._in_channels, self._out_channels)
                
-        return GraphConvFunction(self._in_channels, self._out_channels, idxn, idxe, degs, self._edge_mem_limit)(input, weights)
+        return GraphConvFunction(self._in_channels, self._out_channels, idxn, idxe, degs, degs_gpu, self._edge_mem_limit)(input, weights)
         
 
 

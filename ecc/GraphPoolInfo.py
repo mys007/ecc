@@ -20,6 +20,7 @@ class GraphPoolInfo(object):
     def __init__(self, *args, **kwargs):
         self._idxn = None           #indices into input tensor of convolution (node features)
         self._degrees = None        #in-degrees of output nodes (slices _idxn)
+        self._degrees_gpu = None
         if len(args)>0 or len(kwargs)>0:
             self.set_batch(*args, **kwargs)
             
@@ -37,23 +38,26 @@ class GraphPoolInfo(object):
         graphs_to = graphs_to if isinstance(graphs_to,(list,tuple)) else [graphs_to]
         
         idxn = []
-        self._degrees = []   
+        degrees = []   
         p = 0        
               
         for map, G_from, G_to in zip(poolmaps, graphs_from, graphs_to):
             for v in range(G_to.vcount()):
                 nlist = map.get(v, [])
                 idxn.extend([n+p for n in nlist])
-                self._degrees.append(len(nlist))
+                degrees.append(len(nlist))
             p += G_from.vcount()
          
         self._idxn = torch.LongTensor(idxn)
-
+        self._degrees = torch.LongTensor(degrees)
+        self._degrees_gpu = None  
+        
     def cuda(self):
         self._idxn = self._idxn.cuda()
+        self._degrees_gpu = self._degrees.cuda()
         
     def get_buffers(self):
         """ Provides data to `GraphPoolModule`.
         """    
-        return self._idxn, self._degrees
+        return self._idxn, self._degrees, self._degrees_gpu
  

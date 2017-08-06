@@ -52,3 +52,18 @@ def one_hot_discretization(feat, clip_min, clip_max, upweight):
     onehot = np.zeros((feat.shape[0], clip_max - clip_min + 1))
     onehot[np.arange(onehot.shape[0]), indices] = onehot.shape[1] if upweight else 1
     return onehot    
+    
+def get_edge_shards(degs, edge_mem_limit):
+    """ Splits iteration over nodes into shards, approximately limited by `edge_mem_limit` edges per shard. 
+    Returns a list of pairs indicating how many output nodes and edges to process in each shard."""
+    d = degs if isinstance(degs, np.ndarray) else degs.numpy()
+    cs = np.cumsum(d)
+    cse = cs // edge_mem_limit
+    _, cse_i, cse_c = np.unique(cse, return_index=True, return_counts=True)
+    
+    shards = []
+    for b in range(len(cse_i)):
+        numd = cse_c[b]
+        nume = (cs[-1] if b==len(cse_i)-1 else cs[cse_i[b+1]-1]) - cs[cse_i[b]] + d[cse_i[b]]   
+        shards.append( (int(numd), int(nume)) )
+    return shards

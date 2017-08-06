@@ -24,6 +24,7 @@ class GraphConvInfo(object):
         self._idxn = None           #indices into input tensor of convolution (node features)
         self._idxe = None           #indices into edge features tensor (or None if it would be linear, i.e. no compaction)
         self._degrees = None        #in-degrees of output nodes (slices _idxn and _idxe)
+        self._degrees_gpu = None
         self._edgefeats = None      #edge features tensor (to be processed by feature-generating network)
         if len(args)>0 or len(kwargs)>0:
             self.set_batch(*args, **kwargs)
@@ -39,7 +40,7 @@ class GraphConvInfo(object):
         graphs = graphs if isinstance(graphs,(list,tuple)) else [graphs]
         p = 0
         idxn = []
-        self._degrees = []
+        degrees = []
         edges = []
                 
         for i,G in enumerate(graphs):
@@ -51,7 +52,7 @@ class GraphConvInfo(object):
                     idxn.append(u+p)
                     edges.append(G.es[G.get_eid(u,v)].attributes())
                     
-                self._degrees.append(indeg[v])        
+                degrees.append(indeg[v])        
                 
             p += G.vcount()
 
@@ -60,13 +61,17 @@ class GraphConvInfo(object):
         self._idxn = torch.LongTensor(idxn)
         if self._idxe is not None:
             assert self._idxe.numel() == self._idxn.numel()
+            
+        self._degrees = torch.LongTensor(degrees)
+        self._degrees_gpu = None            
         
     def cuda(self):
         self._idxn = self._idxn.cuda()
         if self._idxe is not None: self._idxe = self._idxe.cuda()
+        self._degrees_gpu = self._degrees.cuda()
         self._edgefeats = self._edgefeats.cuda()        
         
     def get_buffers(self):
         """ Provides data to `GraphConvModule`.
         """
-        return self._idxn, self._idxe, self._degrees, self._edgefeats
+        return self._idxn, self._idxe, self._degrees, self._degrees_gpu, self._edgefeats
