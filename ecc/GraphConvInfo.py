@@ -10,14 +10,15 @@ from builtins import range
 
 import igraph
 import torch
-
+from collections import defaultdict
+import numpy as np
     
 class GraphConvInfo(object):          
     """ Holds information about the structure of graph(s) in a vectorized form useful to `GraphConvModule`. 
     
     We assume that the node feature tensor (given to `GraphConvModule` as input) is ordered by igraph vertex id, e.g. the fifth row corresponds to vertex with id=4. Batch processing is realized by concatenating all graphs into a large graph of disconnected components (and all node feature tensors into a large tensor).
 
-    The class requires problem-specific `edge_feat_func` function, which receives list of edge attributes (dict) and returns Tensor of edge features and LongTensor of inverse indices if edge compaction was performed (less unique edge features than edges so some may be reused).
+    The class requires problem-specific `edge_feat_func` function, which receives dict of edge attributes and returns Tensor of edge features and LongTensor of inverse indices if edge compaction was performed (less unique edge features than edges so some may be reused).
     """
 
     def __init__(self, *args, **kwargs):
@@ -41,24 +42,22 @@ class GraphConvInfo(object):
         p = 0
         idxn = []
         degrees = []
-        edges = []
+        edgeattrs = defaultdict(list)
                 
         for i,G in enumerate(graphs):
-        
-            indeg = G.indegree(G.vs, loops=True)
+            E = np.array(G.get_edgelist())
+            idx = E[:,1].argsort() # sort by target
             
-            for v in range(G.vcount()):               
-                for u in G.predecessors(v): # we assume that self-loops are in the graphs already
-                    idxn.append(u+p)
-                    edges.append(G.es[G.get_eid(u,v)].attributes())
-                    
-                degrees.append(indeg[v])        
-                
+            idxn.append(p + E[idx,0])
+            edgeseq = G.es[idx.tolist()]
+            for a in G.es.attributes():
+                edgeattrs[a] += edgeseq.get_attribute_values(a)
+            degrees += G.indegree(G.vs, loops=True)
             p += G.vcount()
-
-        self._edgefeats, self._idxe = edge_feat_func(edges)
+              
+        self._edgefeats, self._idxe = edge_feat_func(edgeattrs)
         
-        self._idxn = torch.LongTensor(idxn)
+        self._idxn = torch.LongTensor(np.concatenate(idxn))
         if self._idxe is not None:
             assert self._idxe.numel() == self._idxn.numel()
             

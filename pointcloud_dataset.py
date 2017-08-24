@@ -30,12 +30,12 @@ MODELNET10_PATH = './datasets/modelnet10/'
 MODELNET40_PATH = './datasets/modelnet40/'
 
 
-def cloud_edge_feats(edges, args):
+def cloud_edge_feats(edgeattrs, args):
     """ Defines edge features for `GraphConvInfo` in the case of point clouds. Assembles edge feature tensor given point offsets as edge attributes.    
     """
     
     columns = []
-    offsets = np.asarray([ e['offset'] for e in edges ])
+    offsets = np.asarray(edgeattrs['offset'])
     
     # todo: possible discretization, round to multiples of min(offsets[offsets>0]) ? Or k-means (slow?)?
     
