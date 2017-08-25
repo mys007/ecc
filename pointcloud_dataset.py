@@ -158,7 +158,6 @@ def get_modelnet(args, pyramid_conf, training):
     def loader(filename, test_angle=None):
         P = pcl.load(filename).to_array()
         cls = classmap['_'.join(os.path.basename(filename).split('_')[:-1])] 
-        F = np.ones((P.shape[0],1), dtype=np.float32) # no point features in modelnet
         
         #transform into ball of diameter 32 (obj scale in modelnet has no meaning, original meshes have random sizes) 
         # (in the paper we used a unit ball and ./32 grid sizes, this is equivalent in effect)
@@ -190,6 +189,7 @@ def get_modelnet(args, pyramid_conf, training):
         # coarsen to initial resolution (btw, axis-aligned quantization of rigidly transformed cloud adds jittering noise)
         P -= np.min(P,axis=0) #move to positive octant (voxelgrid has fixed boundaries at axes planes)
         cloud = pcu.voxelgrid(pcl.PointCloud(P.astype(np.float32)), pyramid_conf[0][0])
+        F = np.ones((cloud.size,1), dtype=np.float32) # no point features in modelnet        
 
         graphs, poolmaps = pcu.create_graph_pyramid(args, cloud, pyramid_conf)     
 
