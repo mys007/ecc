@@ -53,7 +53,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 --dataset modelnet10 --test_nth_epoch 25 --lr 0.1 --lr_steps '[50,100,150]' --epochs 175 --batch_size 64 --batch_parts 4 \
 --model_config 'i_1_2, c_16,b,r, c_32,b,r, m_2.5_7.5, c_32,b,r, c_32,b,r, m_7.5_22.5, c_64,b,r, m_1e10_1e10, f_64,b,r,d_0.2,f_10' \
 --fnet_llbias 0 --fnet_widths '[16,32]' --pc_augm_scale 1.2 --pc_augm_mirror_prob 0.2 --pc_augm_input_dropout 0.1 \
---nworkers 3 --edgecompaction 1 --edge_mem_limit 1000 --odir results/modelnet10
+--nworkers 3 --edgecompaction 1 --odir results/modelnet10
 ```
 
 To train the ModelNet40 model described in the paper, run:
