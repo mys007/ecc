@@ -47,62 +47,67 @@ def get_kernel_func(kname, ksrc, dtype):
         
 ####       
        
-def conv_aggregate_fw_kernel(**kwargs):
+def conv_aggregate_fw_kernel_v2(**kwargs):
     kernel = r'''
 extern "C"
-__global__ void conv_aggregate_fw_kernel(DTYPE* dest, const DTYPE* src, const long long* lengths, int width, int N, int dest_stridex, int src_stridex) {
+__global__ void conv_aggregate_fw_kernel_v2(DTYPE* dest, const DTYPE* src, const long long* lengths, const long long* cslengths, int width, int N, int dest_stridex, int src_stridex, int blockDimy) {
 	
     int x = blockIdx.x * blockDim.x + threadIdx.x; //one thread per feature channel, runs over all nodes
     if (x >= width) return;
+    
+    int i = blockIdx.y * blockDimy;
+    int imax = min(N, i + blockDimy);
+    dest += dest_stridex * i + x;
+    src += src_stridex * (cslengths[i] - lengths[i]) + x;
 
-	for (int i=0; i<N; ++i) {	
-		if (lengths[i] > 0) {
-			int src_step = lengths[i] * src_stridex;
-			DTYPE sum = 0;
-		
-			for (int j = x; j < src_step; j += src_stridex) {
-				sum += src[j];
+	for (; i<imax; ++i) {	
+        int len = lengths[i];
+		if (len > 0) {
+			DTYPE sum = 0;		
+            for (int j=0; j<len; j++, src += src_stridex) {
+                sum += *src;
 			}
 
-			dest[x] = sum / lengths[i];			
-			src += src_step;
+            *dest = sum / len;			
 		}
 		else {
-			dest[x] = 0;
+			*dest = 0;
 		}
 		
 		dest += dest_stridex;
 	}
 }
 '''
-    return kernel
-
-
-def conv_aggregate_bw_kernel(**kwargs):
+    return kernel   
+    
+def conv_aggregate_bw_kernel_v2(**kwargs):
     kernel = r'''
 extern "C"
-__global__ void conv_aggregate_bw_kernel(DTYPE* dest, const DTYPE* src, const long long* lengths, int width, int N, int dest_stridex, int src_stridex) {
+__global__ void conv_aggregate_bw_kernel_v2(DTYPE* dest, const DTYPE* src, const long long* lengths, const long long* cslengths, int width, int N, int dest_stridex, int src_stridex, int blockDimy) {
 	
     int x = blockIdx.x * blockDim.x + threadIdx.x; //one thread per feature channel, runs over all nodes
     if (x >= width) return;
+    
+    int i = blockIdx.y * blockDimy;
+    int imax = min(N, i + blockDimy);
+    dest += dest_stridex * (cslengths[i] - lengths[i]) + x;    
+    src += src_stridex * i + x;
 	
-	for (int i=0; i<N; ++i) {
-		if (lengths[i] > 0) {
-			int dest_step = lengths[i] * dest_stridex;	
-			DTYPE val = src[x] / lengths[i];	
-			
-			for (int j = x; j < dest_step; j += dest_stridex) {
-				dest[j] = val;
+	for (; i<imax; ++i) {	
+        int len = lengths[i];
+		if (len > 0) {
+			DTYPE val = *src / len;
+            for (int j=0; j<len; j++, dest += dest_stridex) {
+                *dest = val;
 			}
-
-			dest += dest_step;
 		}
 		
 		src += src_stridex;
 	}
 }
 '''
-    return kernel
+    return kernel   
+    
 
 def conv_aggregate_fw(dest, src, degs):   
     n = degs.numel()
@@ -110,10 +115,11 @@ def conv_aggregate_fw(dest, src, degs):
     assert n == dest.size(0) and w == dest.size(1)
     assert type(src)==type(dest) and isinstance(degs, torch.cuda.LongTensor)
     
-    function, stream = get_kernel_func('conv_aggregate_fw_kernel', conv_aggregate_fw_kernel(), get_dtype(src))
-    function(args=[dest.data_ptr(), src.data_ptr(), degs.data_ptr(), np.int32(w), np.int32(n), np.int32(dest.stride(0)), np.int32(src.stride(0))],
-             block=(CUDA_NUM_THREADS,1,1), grid=(GET_BLOCKS(w),1,1), stream=stream)
-             
+    csdegs = torch.cumsum(degs,0)
+    blockDimY = n // (1024/(w//32+1)) +1 # try to occuppy 1024 threads by splitting also over nodes
+    function, stream = get_kernel_func('conv_aggregate_fw_kernel_v2', conv_aggregate_fw_kernel_v2(), get_dtype(src))
+    function(args=[dest.data_ptr(), src.data_ptr(), degs.data_ptr(), csdegs.data_ptr(), np.int32(w), np.int32(n), np.int32(dest.stride(0)), np.int32(src.stride(0)), np.int32(blockDimY)], 
+             block=(CUDA_NUM_THREADS,1,1), grid=(GET_BLOCKS(w),n//blockDimY+1,1), stream=stream)            
                                          
 def conv_aggregate_bw(dest, src, degs):
     n = degs.numel()
@@ -121,10 +127,11 @@ def conv_aggregate_bw(dest, src, degs):
     assert n == src.size(0) and w == dest.size(1)
     assert type(src)==type(dest) and isinstance(degs, torch.cuda.LongTensor)
     
-    function, stream = get_kernel_func('conv_aggregate_bw_kernel', conv_aggregate_bw_kernel(), get_dtype(src))
-    function(args=[dest.data_ptr(), src.data_ptr(), degs.data_ptr(), np.int32(w), np.int32(n), np.int32(dest.stride(0)), np.int32(src.stride(0))],
-             block=(CUDA_NUM_THREADS,1,1), grid=(GET_BLOCKS(w),1,1), stream=stream)                           
-
+    csdegs = torch.cumsum(degs,0)
+    blockDimY = n // (1024/(w//32+1)) +1 # try to occuppy 1024 threads by splitting also over nodes
+    function, stream = get_kernel_func('conv_aggregate_bw_kernel_v2', conv_aggregate_bw_kernel_v2(), get_dtype(src))
+    function(args=[dest.data_ptr(), src.data_ptr(), degs.data_ptr(), csdegs.data_ptr(), np.int32(w), np.int32(n), np.int32(dest.stride(0)), np.int32(src.stride(0)), np.int32(blockDimY)],
+             block=(CUDA_NUM_THREADS,1,1), grid=(GET_BLOCKS(w),n//blockDimY+1,1), stream=stream)
                                          
 
 
