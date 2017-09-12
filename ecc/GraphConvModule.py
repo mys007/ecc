@@ -33,22 +33,21 @@ class GraphConvFunction(Function):
         self.save_for_backward(input, weights)              
 
         output = input.new(self._degs.numel(), self._out_channels)       
-        sel_input, sel_weights, products = input.new(), input.new(), input.new()
         
         # loop over blocks of output nodes
         startd, starte = 0, 0
         for numd, nume in self._shards:            
 
             # select sequence of matching pairs of node and edge weights            
-            torch.index_select(input, 0, self._idxn.narrow(0,starte,nume), out=sel_input)
+            sel_input = torch.index_select(input, 0, self._idxn.narrow(0,starte,nume))
             
             if self._idxe is not None:
-                torch.index_select(weights, 0, self._idxe.narrow(0,starte,nume), out=sel_weights)
+                sel_weights = torch.index_select(weights, 0, self._idxe.narrow(0,starte,nume))
             else:
                 sel_weights = weights.narrow(0,starte,nume)
                 
             # compute matrix-vector products    
-            torch.bmm(sel_input.unsqueeze(1), sel_weights, out=products) 
+            products = torch.bmm(sel_input.unsqueeze(1), sel_weights)
 
             # average over nodes
             if self._idxn.is_cuda:
@@ -64,6 +63,7 @@ class GraphConvFunction(Function):
  
             startd += numd
             starte += nume  
+            del sel_input, sel_weights, products
         
         return output
 
@@ -73,14 +73,12 @@ class GraphConvFunction(Function):
         grad_input = input.new(input.size()).fill_(0)
         grad_weights = weights.new(weights.size())
         if self._idxe is not None: grad_weights.fill_(0)
-        
-        grad_products, sel_input, tmp = input.new(), input.new(), input.new()
 
         # loop over blocks of output nodes
         startd, starte = 0, 0
         for numd, nume in self._shards:         
             
-            grad_products.resize_(nume, self._out_channels)
+            grad_products = input.new(nume, self._out_channels)
 
             if self._idxn.is_cuda:
                 cuda_kernels.conv_aggregate_bw(grad_products, grad_output.narrow(0,startd,numd), self._degs_gpu.narrow(0,startd,numd))
@@ -90,14 +88,14 @@ class GraphConvFunction(Function):
                     if self._degs[i]>0:
                         torch.div(grad_output[i], self._degs[i], out=grad_products[k])
                         if self._degs[i]>1:
-                            grad_products.narrow(0, k+1, self._degs[i]-1).copy_( grad_products[k].expand(self._degs[i]-1,1,self._out_channels) )
+                            grad_products.narrow(0, k+1, self._degs[i]-1).copy_( grad_products[k].expand(self._degs[i]-1,1,self._out_channels).squeeze(1) )
                         k = k + self._degs[i]    
 
             # grad wrt weights
-            torch.index_select(input, 0, self._idxn.narrow(0,starte,nume), out=sel_input)
+            sel_input = torch.index_select(input, 0, self._idxn.narrow(0,starte,nume))
             
             if self._idxe is not None:
-                torch.bmm(sel_input.unsqueeze(1).transpose_(2,1), grad_products.unsqueeze(1), out=tmp) 
+                tmp = torch.bmm(sel_input.unsqueeze(1).transpose_(2,1), grad_products.unsqueeze(1)) 
                 grad_weights.index_add_(0, self._idxe.narrow(0,starte,nume), tmp)
             else:
                 torch.bmm(sel_input.unsqueeze(1).transpose_(2,1), grad_products.unsqueeze(1), out=grad_weights.narrow(0,starte,nume))
@@ -106,13 +104,15 @@ class GraphConvFunction(Function):
             if self._idxe is not None:
                 torch.index_select(weights, 0, self._idxe.narrow(0,starte,nume), out=tmp)
                 torch.bmm(grad_products.unsqueeze(1), tmp.transpose_(2,1), out=sel_input)
+                del tmp
             else:
                 torch.bmm(grad_products.unsqueeze(1), weights.narrow(0,starte,nume).transpose_(2,1), out=sel_input)
 
             grad_input.index_add_(0, self._idxn.narrow(0,starte,nume), sel_input)
                     
             startd += numd
-            starte += nume   
+            starte += nume  
+            del grad_products, sel_input
        
         return grad_input, grad_weights
 

@@ -72,7 +72,7 @@ class TestGraphConvModule(unittest.TestCase):
         func = GraphConvFunction(in_channels, out_channels, idxn, idxe, degs, degs, edge_mem_limit=1)
         output2 = func(*data)
 
-        self.assertLess((output1-output2).norm(), 1e-6)
+        self.assertLess((output1-output2).norm().data[0], 1e-6)
 
     
         

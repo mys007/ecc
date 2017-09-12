@@ -35,14 +35,13 @@ class GraphPoolFunction(Function):
         if self._aggr==GraphPoolFunction.AGGR_MAX:
             self._max_indices = self._idxn.new(self._degs.numel(), input.size(1)).fill_(-1)
         
-        sel_input = input.new()
         self._input_size = input.size()
         
         # loop over blocks of output nodes
         startd, starte = 0, 0
         for numd, nume in self._shards: 
             
-            torch.index_select(input, 0, self._idxn.narrow(0,starte,nume), out=sel_input)
+            sel_input = torch.index_select(input, 0, self._idxn.narrow(0,starte,nume))
             
             # aggregate over nodes
             if self._idxn.is_cuda:
@@ -63,20 +62,20 @@ class GraphPoolFunction(Function):
                     k = k + self._degs[i]
                     
             startd += numd
-            starte += nume  
+            starte += nume 
+            del sel_input
     
         return output
 
         
     def backward(self, grad_output):
         grad_input = grad_output.new(self._input_size).fill_(0)
-        grad_sel_input = grad_output.new()
 
         # loop over blocks of output nodes
         startd, starte = 0, 0
         for numd, nume in self._shards:                  
             
-            grad_sel_input.resize_(nume, grad_output.size(1))
+            grad_sel_input = grad_output.new(nume, grad_output.size(1))
 
             # grad wrt input
             if self._idxn.is_cuda:
@@ -100,6 +99,7 @@ class GraphPoolFunction(Function):
                     
             startd += numd
             starte += nume   
+            del grad_sel_input
        
         return grad_input
         
