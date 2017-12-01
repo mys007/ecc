@@ -34,7 +34,7 @@ class GraphConvInfo(object):
         """ Creates a representation of a given batch of graphs.
         
         Parameters:
-        graphs: single graph or a list/tuple of graphs. The graphs are supposed to be igraph objects with self-loops (!).
+        graphs: single graph or a list/tuple of graphs.
         edge_feat_func: see class description.
         """
         

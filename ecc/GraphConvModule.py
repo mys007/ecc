@@ -16,7 +16,7 @@ from . import cuda_kernels
 from . import utils
 
 class GraphConvFunction(Function):
-    """ Computes matrix-vector products for each edge and averages them over respective nodes. The evaluation is computed in blocks of size `edge_mem_limit` to reduce peak memory load. See `GraphConvInfo` for info on `idxn, idxe, degs`.
+    """ Computes operations for each edge and averages the results over respective nodes. The operation is either matrix-vector multiplication (for 3D weight tensors) or element-wise vector-vector multiplication (for 2D weight tensors). The evaluation is computed in blocks of size `edge_mem_limit` to reduce peak memory load. See `GraphConvInfo` for info on `idxn, idxe, degs`.
     """
 
     def __init__(self, in_channels, out_channels, idxn, idxe, degs, degs_gpu, edge_mem_limit=1e20):
@@ -28,9 +28,21 @@ class GraphConvFunction(Function):
         self._degs = degs
         self._degs_gpu = degs_gpu
         self._shards = utils.get_edge_shards(degs, edge_mem_limit)
+
+    def _multiply(self, a, b, out, f_a=None, f_b=None):
+        """ Performs operation on edge weights and node signal """
+        if self._full_weight_mat:
+            # weights are full in_channels x out_channels matrices -> mm
+            torch.bmm(f_a(a) if f_a else a, f_b(b) if f_b else b, out=out)
+        else:
+            # weights represent diagonal matrices -> mul
+            torch.mul(a, b.expand_as(a), out=out)
        
     def forward(self, input, weights):
-        self.save_for_backward(input, weights)              
+        self.save_for_backward(input, weights)
+
+        self._full_weight_mat = weights.dim()==3
+        assert self._full_weight_mat or (self._in_channels==self._out_channels and weights.size(1) == self._in_channels)
 
         output = input.new(self._degs.numel(), self._out_channels)       
         
@@ -46,8 +58,9 @@ class GraphConvFunction(Function):
             else:
                 sel_weights = weights.narrow(0,starte,nume)
                 
-            # compute matrix-vector products    
-            products = torch.bmm(sel_input.unsqueeze(1), sel_weights)
+            # compute matrix-vector products
+            products = input.new()
+            self._multiply(sel_input, sel_weights, products, lambda a: a.unsqueeze(1))
 
             # average over nodes
             if self._idxn.is_cuda:
@@ -78,7 +91,7 @@ class GraphConvFunction(Function):
         startd, starte = 0, 0
         for numd, nume in self._shards:         
             
-            grad_products = input.new(nume, self._out_channels)
+            grad_products, tmp = input.new(nume, self._out_channels), input.new()
 
             if self._idxn.is_cuda:
                 cuda_kernels.conv_aggregate_bw(grad_products, grad_output.narrow(0,startd,numd), self._degs_gpu.narrow(0,startd,numd))
@@ -95,18 +108,18 @@ class GraphConvFunction(Function):
             sel_input = torch.index_select(input, 0, self._idxn.narrow(0,starte,nume))
             
             if self._idxe is not None:
-                tmp = torch.bmm(sel_input.unsqueeze(1).transpose_(2,1), grad_products.unsqueeze(1)) 
+                self._multiply(sel_input, grad_products, tmp, lambda a: a.unsqueeze(1).transpose_(2,1), lambda b: b.unsqueeze(1))
                 grad_weights.index_add_(0, self._idxe.narrow(0,starte,nume), tmp)
             else:
-                torch.bmm(sel_input.unsqueeze(1).transpose_(2,1), grad_products.unsqueeze(1), out=grad_weights.narrow(0,starte,nume))
-                    
+                self._multiply(sel_input, grad_products, grad_weights.narrow(0,starte,nume), lambda a: a.unsqueeze(1).transpose_(2,1), lambda b: b.unsqueeze(1))
+
             # grad wrt input
             if self._idxe is not None:
                 torch.index_select(weights, 0, self._idxe.narrow(0,starte,nume), out=tmp)
-                torch.bmm(grad_products.unsqueeze(1), tmp.transpose_(2,1), out=sel_input)
+                self._multiply(grad_products, tmp, sel_input, lambda a: a.unsqueeze(1), lambda b: b.transpose_(2,1))
                 del tmp
             else:
-                torch.bmm(grad_products.unsqueeze(1), weights.narrow(0,starte,nume).transpose_(2,1), out=sel_input)
+                self._multiply(grad_products, weights.narrow(0,starte,nume), sel_input, lambda a: a.unsqueeze(1), lambda b: b.transpose_(2,1))
 
             grad_input.index_add_(0, self._idxn.narrow(0,starte,nume), sel_input)
                     
@@ -125,7 +138,7 @@ class GraphConvModule(nn.Module):
     Parameters:
     in_channels: number of input channels
     out_channels: number of output channels
-    filter_net: filter-generating network transforming a 2D tensor (# edges, # edge features) to (# edges, in_channels*out_channels)
+    filter_net: filter-generating network transforming a 2D tensor (# edges, # edge features) to (# edges, in_channels*out_channels) or (# edges, in_channels)
     gc_info: GraphConvInfo object containing graph(s) structure information, can be also set with `set_info()` method.
     edge_mem_limit: block size (number of evaluated edges in parallel) for convolution evaluation, a low value reduces peak memory. 
     """
@@ -150,9 +163,11 @@ class GraphConvModule(nn.Module):
         
         # evalute and reshape filter weights
         weights = self._fnet(edgefeats)
-        assert input.dim()==2 and weights.dim()==2 and weights.size(1) == self._in_channels*self._out_channels
-        weights = weights.view(-1, self._in_channels, self._out_channels)
-               
+        assert input.dim()==2 and weights.dim()==2 and (weights.size(1) == self._in_channels*self._out_channels or
+               (self._in_channels == self._out_channels and weights.size(1) == self._in_channels))
+        if weights.size(1) == self._in_channels*self._out_channels:
+            weights = weights.view(-1, self._in_channels, self._out_channels)
+
         return GraphConvFunction(self._in_channels, self._out_channels, idxn, idxe, degs, degs_gpu, self._edge_mem_limit)(input, weights)
         
 
