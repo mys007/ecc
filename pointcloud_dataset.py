@@ -19,7 +19,7 @@ import logging
 import torch
 import torchnet as tnt
 
-import pcl
+import open3d
 import pointcloud_utils as pcu
 
 import ecc
@@ -107,12 +107,11 @@ def get_sydney(args, pyramid_conf, training):
             P = np.dot(P, M.T)
   
         # coarsen to initial resolution (btw, axis-aligned quantization of rigidly transformed cloud adds jittering noise)
-        P -= np.min(P,axis=0) #move to positive octant (voxelgrid has fixed boundaries at axes planes)
-        PF = np.hstack([P, F]).astype(np.float32)
-        PF_filtered = pcu.voxelgrid(pcl.PointCloud_PointXYZI(PF), pyramid_conf[0][0]).to_array() # aggregates intensities too (note pcl wrapper bug: only int intensities accepted)
-        F = PF_filtered[:,3]/255 - 0.5 # laser return intensities in [-0.5,0.5]
+        P -= np.min(P, axis=0)  #move to positive octant (voxelgrid has fixed boundaries at axes planes)
+        cloud = pcu.create_cloud(P, intensity=F)
+        cloud = open3d.voxel_down_sample(cloud, voxel_size=pyramid_conf[0][0])  # aggregates intensities too
+        F = np.asarray(cloud.colors)[:,0]/255 - 0.5  # laser return intensities in [-0.5,0.5]
 
-        cloud = pcl.PointCloud(PF_filtered[:,0:3]) # (pcl wrapper bug: XYZI cannot query kd-tree by radius)
         graphs, poolmaps = pcu.create_graph_pyramid(args, cloud, pyramid_conf)     
 
         return F, cls, graphs, poolmaps
@@ -156,8 +155,8 @@ def get_modelnet(args, pyramid_conf, training):
                     'sink':29, 'sofa':30, 'stairs':31, 'stool':32, 'table':33, 'tent':34, 'toilet':35, 'tv_stand':36, 'vase':37, 'wardrobe':38, 'xbox':39}    
 
     def loader(filename, test_angle=None):
-        P = pcl.load(filename).to_array()
-        cls = classmap['_'.join(os.path.basename(filename).split('_')[:-1])] 
+        P = np.asarray(open3d.read_point_cloud(filename).points)
+        cls = classmap['_'.join(os.path.basename(filename).split('_')[:-1])]
         
         #transform into ball of diameter 32 (obj scale in modelnet has no meaning, original meshes have random sizes) 
         # (in the paper we used a unit ball and ./32 grid sizes, this is equivalent in effect)
@@ -188,8 +187,9 @@ def get_modelnet(args, pyramid_conf, training):
   
         # coarsen to initial resolution (btw, axis-aligned quantization of rigidly transformed cloud adds jittering noise)
         P -= np.min(P,axis=0) #move to positive octant (voxelgrid has fixed boundaries at axes planes)
-        cloud = pcu.voxelgrid(pcl.PointCloud(P.astype(np.float32)), pyramid_conf[0][0])
-        F = np.ones((cloud.size,1), dtype=np.float32) # no point features in modelnet        
+        cloud = pcu.create_cloud(P)
+        cloud = open3d.voxel_down_sample(cloud, voxel_size=pyramid_conf[0][0])
+        F = np.ones((len(cloud.points),1), dtype=np.float32) # no point features in modelnet
 
         graphs, poolmaps = pcu.create_graph_pyramid(args, cloud, pyramid_conf)     
 
@@ -209,7 +209,3 @@ def get_modelnet(args, pyramid_conf, training):
         concated = tnt.dataset.ConcatDataset(datasets)      
         # reshuffle to put same samples with different rotation after each other for easy aggregation afterwards      
         return tnt.dataset.ResampleDataset(concated, lambda d,i: int((i%12) * len(d)/12 + math.floor(i/12)))           
-        
- 
-
-

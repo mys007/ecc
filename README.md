@@ -17,7 +17,7 @@ This is the official PyTorch port of the original Torch implementation of our CV
 
 1. Install [PyTorch](https://pytorch.org) and then [torchnet](https://github.com/pytorch/tnt) with `pip install git+https://github.com/pytorch/tnt.git@master`.
 
-2. The point cloud classification part of the code relies on the Point cloud library, which is unfortunately a bit troublesome to set up for Python. Install [PCL](http://pointclouds.org) and then its python wrapper with `git clone https://github.com/strawlab/python-pcl.git ; cd python-pcl; pip install cython; python setup.py install`. While simple `sudo apt-get pcl` should work in theory, I had success with installing full-sized PCL 1.8 from sources with qhull support, which I got with `sudo apt-get install libqhull-dev` beforehand, and then manually took care of an file naming [issue](https://github.com/strawlab/python-pcl/issues/97) in PCL.
+2. The point cloud classification part of the code relies on [Open3D](http://www.open3d.org). In my experience installation from source is more reliable than pip-installing.
 
 3. Install additional Python packages: `pip install future python-igraph tqdm transforms3d pynvrtc cupy`.
 
