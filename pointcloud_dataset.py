@@ -114,7 +114,7 @@ def get_sydney(args, pyramid_conf, training):
 
         graphs, poolmaps = pcu.create_graph_pyramid(args, cloud, pyramid_conf)     
 
-        return F, cls, graphs, poolmaps
+        return F.astype(np.float32), cls, graphs, poolmaps
             
     def create_dataset(foldnr):
         return tnt.dataset.ListDataset('{}/folds/fold{:d}.txt'.format(SYDNEY_PATH, foldnr), loader, SYDNEY_PATH + '/objects')
