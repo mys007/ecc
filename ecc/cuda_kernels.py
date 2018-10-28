@@ -9,6 +9,7 @@ from __future__ import print_function
 from builtins import range
 
 import torch
+from torch.utils.cpp_extension import load
 import cupy.cuda
 from pynvrtc.compiler import Program
 from collections import namedtuple
@@ -18,7 +19,9 @@ CUDA_NUM_THREADS = 1024
 
 def GET_BLOCKS(N):
   return (N + CUDA_NUM_THREADS - 1) // CUDA_NUM_THREADS;
-  
+
+ecc_cuda = load(name='ecc_cuda', sources=['ecc/cuda/ecc_cuda.cpp', 'ecc/cuda/ecc_cuda_kernels.cu',], verbose=True)
+
 modules = {}
 
 def get_dtype(t):
@@ -107,19 +110,26 @@ __global__ void conv_aggregate_bw_kernel_v2(DTYPE* dest, const DTYPE* src, const
 }
 '''
     return kernel   
-    
+
+
+
 
 def conv_aggregate_fw(dest, src, degs):   
     n = degs.numel()
     w = src.size(1)
     assert n == dest.size(0) and w == dest.size(1)
     assert type(src)==type(dest) and isinstance(degs, torch.cuda.LongTensor)
-    
+
     csdegs = torch.cumsum(degs,0)
     blockDimY = n // (1024/(w//32+1)) +1 # try to occuppy 1024 threads by splitting also over nodes
-    function, stream = get_kernel_func('conv_aggregate_fw_kernel_v2', conv_aggregate_fw_kernel_v2(), get_dtype(src))
-    function(args=[dest.data_ptr(), src.data_ptr(), degs.data_ptr(), csdegs.data_ptr(), np.int32(w), np.int32(n), np.int32(dest.stride(0)), np.int32(src.stride(0)), np.int32(blockDimY)], 
-             block=(CUDA_NUM_THREADS,1,1), grid=(GET_BLOCKS(w),n//blockDimY+1,1), stream=stream)            
+    ecc_cuda.conv_aggregate_fw(dest, src, degs, csdegs, np.int32(w), np.int32(n), np.int32(dest.stride(0)), np.int32(src.stride(0)), np.int32(blockDimY))
+
+    # destX = dest.clone()
+    # dest.fill_(0)
+    # function, stream = get_kernel_func('conv_aggregate_fw_kernel_v2', conv_aggregate_fw_kernel_v2(), get_dtype(src))
+    # function(args=[dest.data_ptr(), src.data_ptr(), degs.data_ptr(), csdegs.data_ptr(), np.int32(w), np.int32(n), np.int32(dest.stride(0)), np.int32(src.stride(0)), np.int32(blockDimY)],
+    #          block=(CUDA_NUM_THREADS,1,1), grid=(GET_BLOCKS(w),n//blockDimY+1,1), stream=stream)
+    # print(torch.max(dest-destX).item(), torch.min(dest-destX).item())
                                          
 def conv_aggregate_bw(dest, src, degs):
     n = degs.numel()
@@ -129,10 +139,14 @@ def conv_aggregate_bw(dest, src, degs):
     
     csdegs = torch.cumsum(degs,0)
     blockDimY = n // (1024/(w//32+1)) +1 # try to occuppy 1024 threads by splitting also over nodes
-    function, stream = get_kernel_func('conv_aggregate_bw_kernel_v2', conv_aggregate_bw_kernel_v2(), get_dtype(src))
-    function(args=[dest.data_ptr(), src.data_ptr(), degs.data_ptr(), csdegs.data_ptr(), np.int32(w), np.int32(n), np.int32(dest.stride(0)), np.int32(src.stride(0)), np.int32(blockDimY)],
-             block=(CUDA_NUM_THREADS,1,1), grid=(GET_BLOCKS(w),n//blockDimY+1,1), stream=stream)
-                                         
+    ecc_cuda.conv_aggregate_bw(dest, src, degs, csdegs, np.int32(w), np.int32(n), np.int32(dest.stride(0)), np.int32(src.stride(0)), np.int32(blockDimY))
+
+    # destX = dest.clone()
+    # dest.fill_(0)
+    # function, stream = get_kernel_func('conv_aggregate_bw_kernel_v2', conv_aggregate_bw_kernel_v2(), get_dtype(src))
+    # function(args=[dest.data_ptr(), src.data_ptr(), degs.data_ptr(), csdegs.data_ptr(), np.int32(w), np.int32(n), np.int32(dest.stride(0)), np.int32(src.stride(0)), np.int32(blockDimY)],
+    #          block=(CUDA_NUM_THREADS,1,1), grid=(GET_BLOCKS(w),n//blockDimY+1,1), stream=stream)
+    # print(torch.max(dest-destX).item(), torch.min(dest-destX).item())
 
 
 def maxpool_fw_kernel(**kwargs):

@@ -100,9 +100,9 @@ def main():
     elif args.dataset=='modelnet10' or args.dataset=='modelnet40':
         dbinfo = pointcloud_dataset.get_modelnet_info(args)
         create_dataset = pointcloud_dataset.get_modelnet
-        edge_feat_func = pointcloud_dataset.cloud_edge_feats        
+        edge_feat_func = pointcloud_dataset.cloud_edge_feats
     else:
-        raise NotImplementedError('Unknown dataset ' + rgs.dataset)
+        raise NotImplementedError('Unknown dataset ' + args.dataset)
     
     # Create model and optimizer
     if args.resume != '':
@@ -139,7 +139,6 @@ def main():
             model.set_info(GIs, PIs, args.cuda)
             if args.cuda: 
                 inputs, targets = inputs.cuda(), targets.cuda()
-            inputs, targets = Variable(inputs), Variable(targets)
 
             if bidx % args.batch_parts == 0:
                 optimizer.zero_grad()
@@ -151,19 +150,19 @@ def main():
             loss = nn.functional.cross_entropy(outputs, targets)
             loss.backward()
 
-            t_trainer = 1000*(time.time()-t0)          
-            loss_meter.add(loss.data[0])
-            acc_meter.add(outputs.data, targets.data)
+            t_trainer = 1000*(time.time()-t0)
+            loss_meter.add(loss.item())
+            acc_meter.add(outputs.detach().cpu(), targets.cpu())
         
             if bidx % args.batch_parts == args.batch_parts-1: #
                 if args.batch_parts>0: 
                     for p in model.parameters():
-                        p.grad.data.div_(args.batch_parts)
+                        p.grad.div_(args.batch_parts)
                 optimizer.step()
                 
             t_loader_meter.add(t_loader)
             t_trainer_meter.add(t_trainer)  
-            logging.debug('Batch loss %f, Loader time %f ms, Trainer time %f ms.', loss.data[0], t_loader, t_trainer)
+            logging.debug('Batch loss %f, Loader time %f ms, Trainer time %f ms.', loss.item(), t_loader, t_trainer)
                 
             t0 = time.time()
 
@@ -184,23 +183,23 @@ def main():
         cm_meter = tnt.meter.ConfusionMeter(k=dbinfo['classes'])        
         
         # iterate over dataset in batches
-        for bidx, (inputs, targets, GIs, PIs) in enumerate(loader):
-            model.set_info(GIs, PIs, args.cuda)
-            if args.cuda: 
-                inputs, targets = inputs.cuda(), targets.cuda()
-            inputs, targets = Variable(inputs, volatile=True), Variable(targets)
-            
-            outputs = model(inputs)
-            
-            if args.test_sample_avging != 'none':
-                if args.test_sample_avging == 'vote':
-                    _, ii = torch.max(outputs.data,1)
-                    outputs.data.fill_(0).scatter_(1, ii, 1)
-                acc_meter.add(outputs.data.mean(0), targets.data.narrow(0,1,1))
-                cm_meter.add(outputs.data.mean(0), targets.data.narrow(0,1,1))                 
-            else:
-                acc_meter.add(outputs.data, targets.data)
-                cm_meter.add(outputs.data, targets.data)  
+        with torch.no_grad():
+            for bidx, (inputs, targets, GIs, PIs) in enumerate(loader):
+                model.set_info(GIs, PIs, args.cuda)
+                if args.cuda:
+                    inputs = inputs.cuda()
+
+                outputs = model(inputs).cpu()
+
+                if args.test_sample_avging != 'none':
+                    if args.test_sample_avging == 'vote':
+                        _, ii = torch.max(outputs, 1)
+                        outputs.fill_(0).scatter_(1, ii, 1)
+                    acc_meter.add(outputs.mean(0), targets.narrow(0,1,1))
+                    cm_meter.add(outputs.mean(0), targets.narrow(0,1,1))
+                else:
+                    acc_meter.add(outputs, targets)
+                    cm_meter.add(outputs, targets)
         
         f1 = compute_F1(cm_meter.value())
         cacc = compute_class_acc(cm_meter.value())        

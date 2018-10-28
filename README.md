@@ -15,13 +15,13 @@ This is the official PyTorch port of the original Torch implementation of our CV
 
 ## Requirements
 
-1. Install [PyTorch](https://pytorch.org) and then [torchnet](https://github.com/pytorch/tnt) with `pip install git+https://github.com/pytorch/tnt.git@master`.
+1. Install [PyTorch 4.0.1](https://pytorch.org) and then [torchnet](https://github.com/pytorch/tnt) with `pip install git+https://github.com/pytorch/tnt.git@master`.
 
 2. The point cloud classification part of the code relies on [Open3D](http://www.open3d.org). In my experience installation from source is more reliable than pip-installing.
 
-3. Install additional Python packages: `pip install future python-igraph tqdm transforms3d pynvrtc cupy`.
+3. Install additional Python packages: `pip install future python-igraph tqdm transforms3d ninja`.
 
-The code was tested on Ubuntu 14.04 with Python 2.7 or 3.6.
+The code was tested on Ubuntu 16.04 with Python 2.7 or 3.6.
 
 
 

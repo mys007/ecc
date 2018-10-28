@@ -77,7 +77,7 @@ class GraphConvFunction(Function):
             startd += numd
             starte += nume  
             del sel_input, sel_weights, products
-        
+
         return output
 
     def backward(self, grad_output):
@@ -106,7 +106,7 @@ class GraphConvFunction(Function):
 
             # grad wrt weights
             sel_input = torch.index_select(input, 0, self._idxn.narrow(0,starte,nume))
-            
+
             if self._idxe is not None:
                 self._multiply(sel_input, grad_products, tmp, lambda a: a.unsqueeze(1).transpose_(2,1), lambda b: b.unsqueeze(1))
                 grad_weights.index_add_(0, self._idxe.narrow(0,starte,nume), tmp)
@@ -121,12 +121,12 @@ class GraphConvFunction(Function):
             else:
                 self._multiply(grad_products, weights.narrow(0,starte,nume), sel_input, lambda a: a.unsqueeze(1), lambda b: b.transpose_(2,1))
 
-            grad_input.index_add_(0, self._idxn.narrow(0,starte,nume), sel_input)
-                    
+            grad_input.index_add_(0, self._idxn.narrow(0,starte,nume), sel_input.squeeze(1))
+
             startd += numd
             starte += nume  
             del grad_products, sel_input
-       
+
         return grad_input, grad_weights
 
 
