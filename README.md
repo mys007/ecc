@@ -15,7 +15,7 @@ This is the official PyTorch port of the original Torch implementation of our CV
 
 ## Requirements
 
-1. Install [PyTorch](https://pytorch.org) and then [torchnet](https://github.com/pytorch/tnt) with `pip install git+https://github.com/pytorch/tnt.git@master`.
+1. Install [PyTorch](https://pytorch.org) **0.3** and then [torchnet](https://github.com/pytorch/tnt) with `pip install git+https://github.com/pytorch/tnt.git@master`.
 
 2. The point cloud classification part of the code relies on [Open3D](http://www.open3d.org). In my experience installation from source is more reliable than pip-installing.
 
