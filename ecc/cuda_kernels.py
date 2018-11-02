@@ -114,7 +114,8 @@ def conv_aggregate_fw(dest, src, degs):
     w = src.size(1)
     assert n == dest.size(0) and w == dest.size(1)
     assert type(src)==type(dest) and isinstance(degs, torch.cuda.LongTensor)
-    
+
+    foo = dest[-1,:].sum()  # touch
     csdegs = torch.cumsum(degs,0)
     blockDimY = n // (1024/(w//32+1)) +1 # try to occuppy 1024 threads by splitting also over nodes
     function, stream = get_kernel_func('conv_aggregate_fw_kernel_v2', conv_aggregate_fw_kernel_v2(), get_dtype(src))
